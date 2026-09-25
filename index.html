@@ -87,6 +87,7 @@
   .btn:disabled{ opacity:.5; cursor:default; }
   .save-status{ font-size:11.5px; color:var(--text-faint); opacity:0; transition:opacity .3s ease; }
   .save-status.show{ opacity:1; }
+  .save-status.error{ opacity:1; color:var(--accent); font-weight:600; }
 
   /* ---------- table ---------- */
   .table-scroll{ overflow:auto; border:1px solid var(--border); border-radius:2px; max-height:60vh; }
@@ -320,7 +321,9 @@
   /* tap-to-log sets */
   .set-list{ margin:10px 0 4px; }
   .set-row{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
-  .set-n{ width:16px; flex:none; color:var(--text-faint); font-family:'IBM Plex Mono',monospace; font-size:12px; }
+  .set-tick{ flex:none; width:34px; height:34px; border-radius:50%; border:1.5px solid var(--border); background:none; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; font-size:12px; cursor:pointer; touch-action:manipulation; }
+  .set-tick.on{ border-color:#4CAF50; background:#4CAF50; color:#fff; font-size:15px; }
+  .set-row.is-done .set-val{ color:var(--text-dim); }
   .stepper{ display:flex; align-items:center; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); flex:1; min-width:0; max-width:170px; }
   .stepper button{ flex:none; width:40px; height:44px; background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
   .stepper button:active{ background:var(--accent-dim); }
@@ -413,7 +416,7 @@
   <div id="app"><div class="loading">Loading your log…</div></div>
 
   <footer>
-    Data is saved to your account automatically.
+    <span id="storageNote">Saved in this browser.</span>
     <a id="trashLink">Recently deleted</a> ·
     <a id="resetLink">Reset to sample data</a> ·
     <a id="exportLink">Export data</a> ·
@@ -736,7 +739,9 @@ function sessionHasTargets(session){
  *  has it been logged) rather than collapsing to this one label. */
 function sessionStatus(session){
   if(sessionHasActual(session)){
-    const stillPlanned = DATA.exercises.some(e=>targetSets(session, e.id).length && !cellSets(e.id+'|'+session.id).length);
+    if(session.finished) return 'completed'; // you tapped Finish: whatever's left was skipped
+    const excluded = new Set(session.excluded||[]);
+    const stillPlanned = Object.keys(session.targets||{}).some(id=>!excluded.has(id) && !cellSets(id+'|'+session.id).length && DATA.exercises.some(e=>e.id===id));
     return stillPlanned ? 'in-progress' : 'completed';
   }
   if(sessionHasTargets(session)) return 'planned';
@@ -1251,8 +1256,16 @@ const STORAGE_DEBUG = {
  *  and storage falls back to localStorage permanently for that whole session,
  *  with no error and no way to recover short of a reload. This polls briefly
  *  instead of checking once, so a late-arriving bridge still gets used. */
+/** Only a page running inside Claude can ever get the bridge. Anywhere else (GitHub
+ *  Pages, a local file) waiting for it just held every load up for 12 seconds. */
+function mightHaveClaudeBridge(){
+  let framed = false;
+  try{ framed = window.self !== window.top; }catch(e){ framed = true; }
+  return framed || /claude|anthropic/.test(location.hostname);
+}
+function hasClaude(){ return typeof window.claude !== 'undefined' && typeof window.claude.use === 'function'; }
 function waitForClaudeBridge(timeoutMs){
-  timeoutMs = timeoutMs || 12000;
+  timeoutMs = mightHaveClaudeBridge() ? (timeoutMs || 12000) : 0;
   return new Promise((resolve)=>{
     const start = Date.now();
     (function poll(){
@@ -1357,24 +1370,46 @@ async function loadData(){
 }
 
 let persistInFlight = null;
+let lastSaveFailed = false;
 async function persist(){
+  clearTimeout(saveTimer); saveTimer = null;
   const json = JSON.stringify(DATA);
-  writeLocal(json); // always keep a local copy as a backstop
-  if(STORAGE_MODE!=='db' || !DB){ flashSaved(); return; }
+  const localOk = writeLocal(json); // always keep a local copy as a backstop
+  if(STORAGE_MODE!=='db' || !DB){ localOk ? flashSaved() : flashSaveFailed(); return; }
   // one write at a time per document
   if(persistInFlight){ await persistInFlight.catch(()=>{}); }
   persistInFlight = DB.doc(DB_DOC_PATH).set({ json, savedAt: new Date().toISOString() });
   try{ await persistInFlight; flashSaved(); }
-  catch(e){ console.error('save failed', e); }
+  catch(e){ console.error('save failed', e); localOk ? flashSaved('Saved on this device only') : flashSaveFailed(); }
   finally{ persistInFlight = null; }
 }
 function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(persist, 700); }
-function flashSaved(){
+function flashSaved(text){
+  lastSaveFailed = false;
   const el = document.getElementById('saveStatus');
   if(!el) return;
-  el.textContent = 'Saved'; el.classList.add('show');
-  setTimeout(()=>el.classList.remove('show'), 1200);
+  el.classList.remove('error');
+  el.textContent = text || 'Saved'; el.classList.add('show');
+  setTimeout(()=>{ if(!lastSaveFailed) el.classList.remove('show'); }, 1200);
 }
+/** Says so, loudly and until the next good save, when nothing could be written —
+ *  a "Saved" that isn't true is worse than no indicator at all. */
+function flashSaveFailed(){
+  const first = !lastSaveFailed;
+  lastSaveFailed = true;
+  const el = document.getElementById('saveStatus');
+  if(el){ el.textContent = 'Not saved!'; el.classList.add('show','error'); }
+  if(first) showToast("Couldn't save — this browser is blocking storage (private mode or full). Export your data so nothing's lost.", ()=>document.getElementById('exportLink').click(), 'Export');
+}
+function updateStorageNote(){
+  const el = document.getElementById('storageNote');
+  if(el) el.textContent = STORAGE_MODE==='db'
+    ? 'Saved to your account automatically.'
+    : 'Saved in this browser only — Export data now and then as a backup.';
+}
+// don't let the save debounce lose the last few taps when the page is closed or backgrounded
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden' && saveTimer) persist(); });
+window.addEventListener('pagehide', ()=>{ if(saveTimer) persist(); });
 function setTheme(name){
   DATA.theme = name;
   document.body.dataset.theme = name;
@@ -1587,8 +1622,16 @@ function generateInsight(sortedSessions){
   let decliningCount = 0, decliningName = null;
   DATA.exercises.forEach(e=>{
     const stats = computeExerciseStats(e.id, sortedSessions);
-    if(stats && stats.changeOver4Pct!=null && stats.changeOver4Pct>0){
-      if(!bestImprovement || stats.changeOver4Pct>bestImprovement.pct) bestImprovement = {name:e.name, pct:stats.changeOver4Pct};
+    // only compound lifts, and measured by estimated 1RM (weight AND reps), so a
+    // heavier set for fewer reps — or a jump to a different machine — isn't "progress"
+    if(stats && usesE1RM(e)){
+      const pts = stats.points.filter(p=>p.unit==='kg' && Number.isInteger(p.reps)).slice(-4);
+      if(pts.length>=3){
+        const first = estimate1RMWithRIR(pts[0].value, pts[0].reps, pts[0].rir);
+        const last = estimate1RMWithRIR(pts[pts.length-1].value, pts[pts.length-1].reps, pts[pts.length-1].rir);
+        const pct = +(((last-first)/first)*100).toFixed(1);
+        if(pct>0 && (!bestImprovement || pct>bestImprovement.pct)) bestImprovement = {name:e.name, pct};
+      }
     }
     if(stats && stats.trend==='down' && stats.points.length>=3){
       decliningCount++;
@@ -1644,7 +1687,7 @@ function inferEquipment(name){
   // "dumbbell chest press" is free even though "chest press" alone implies a machine
   if(/barbell|dumbbell|\bdb\b|kettlebell|\bkb\b|trap bar|landmine|ez[- ]bar|goblet/.test(n)) return 'free';
   if(/cable|pulldown|pressdown|pushdown|pull-?through|rope|face pull|pallof|\bfly\b/.test(n)) return 'cable';
-  if(/machine|smith|pec deck|leg press|leg curl|leg extension|hack squat|booty builder|seated row|preacher|hip abduction|hip adduction|assisted|chest press/.test(n)) return 'machine';
+  if(/machine|smith|pec deck|leg press|leg curl|leg extension|hack squat|booty builder|seated row|preacher|hip abduct|hip adduct|adductor|abductor|assisted|chest press/.test(n)) return 'machine';
   if(/plank|push-?up|pull-?up|chin-?up|\bdip\b|dips|rollout|sit-?up|bodyweight|nordic|copenhagen|pistol|muscle-?up|carry|hold|hanging/.test(n)) return 'bodyweight';
   if(/back squat|front squat|deadlift|romanian|split squat|lunge|step-?up|shrug|hammer curl|good morning|hip thrust|bench press|calf raise|wrist curl|neck/.test(n)) return 'free';
   return 'free';
@@ -1715,21 +1758,15 @@ function retagExerciseEntries(exId, fromMachine, toMachine){
   keys.forEach(k=>tagSets(DATA.cells[k], toMachine));
   return keys;
 }
-/** Adds a gym and makes it the current one. The very first gym also takes over
- *  your untagged machine/cable history — that's almost always where it happened,
- *  and otherwise adding a gym would wipe every suggestion. Undoable, never asked. */
+/** Adds a gym and makes it the current one. History logged before gyms existed
+ *  stays untagged — it may span several machines — and is used as a clearly
+ *  labelled fallback until the gym has its own. */
 function addGym(name){
-  const first = !(DATA.machines||[]).length;
   const g = { id: 'm-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name };
   DATA.machines = (DATA.machines||[]).concat([g]);
   DATA.currentGym = g.id;
-  let adopted = [];
-  if(first){
-    DATA.exercises.filter(isGymSpecific).forEach(ex=>{ adopted = adopted.concat(retagExerciseEntries(ex.id, '', g.id)); });
-    if(adopted.length) rebuildPRRecordsFromHistory();
-  }
   scheduleSave();
-  return { id: g.id, adopted };
+  return { id: g.id };
 }
 /** Short text prompt that stacks above whatever's open (closeModal would take the
  *  pop-up underneath down with it). Resolves to the trimmed name, or null. */
@@ -1959,7 +1996,9 @@ function buildPoolForSession(session, sortedSessions, mainLimit, bonusLimit){
   // a blank one; generating them over the top would replace a deliberately built
   // workout with an unrelated list.
   const logged = DATA.exercises.filter(e=>cellSets(e.id+'|'+session.id).length);
-  const planned = DATA.exercises.filter(e=>targetSets(session, e.id).length);
+  // having a target at all — even an empty one for an exercise with no history —
+  // is what puts an exercise in the session
+  const planned = DATA.exercises.filter(e=>session.targets && Object.prototype.hasOwnProperty.call(session.targets, e.id));
   const ownIds = new Set([...logged, ...planned].map(e=>e.id));
   if(ownIds.size){
     const own = DATA.exercises.filter(e=>ownIds.has(e.id));
@@ -2022,8 +2061,23 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
   return mainPool.concat(bonusPool);
 }
 
+/** Big lower-body lifts in a session, judged by what's actually in it rather than
+ *  its split label — a deadlift in a "pull" day hits your legs all the same. */
+function heavyLowerBodyLifts(session){
+  if(!session) return [];
+  const sorted = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
+  const ids = new Set(Object.keys(session.targets||{}));
+  DATA.exercises.forEach(e=>{ if(cellSets(e.id+'|'+session.id).length) ids.add(e.id); });
+  const exs = ids.size ? DATA.exercises.filter(e=>ids.has(e.id)) : buildPoolForSession(session, sorted, 6, 2);
+  return exs.filter(e=>{
+    if(movementTierOf(e)!=='compound') return false;
+    const m = MUSCLE_MAP[e.name] || guessMuscles(e.name);
+    return ['quads','hamstrings','glutes'].some(k=>(m[k]||0)>=0.6);
+  });
+}
 function checkInterference(session){
-  if(!session || (session.cat!=='leg' && session.cat!=='bilat')) return null;
+  const heavy = heavyLowerBodyLifts(session);
+  if(!session || !heavy.length) return null;
   const runs = DATA.runSchedule||[];
   for(const r of runs){
     const rt = RUN_TYPES[r.type];
@@ -2032,7 +2086,8 @@ function checkInterference(session){
     const diff = daysBetween(session.date, r.date);
     if(Math.abs(diff)<=buffer){
       const when = diff===0 ? 'also today' : diff<0 ? 'tomorrow' : 'yesterday';
-      return `You've got a ${CATS[session.cat].label.toLowerCase()} day scheduled, but there's a ${rt.label.toLowerCase()} ${when}. Worth a lighter session, or moving this if your legs feel fatigued.`;
+      const lifts = heavy.slice(0,2).map(e=>e.name.toLowerCase()).join(' and ');
+      return `This session has ${lifts}, and there's a ${rt.label.toLowerCase()} ${when}. Worth going lighter on those, or moving the session if your legs feel fatigued.`;
     }
   }
   return null;
@@ -2229,7 +2284,7 @@ function renderLogTab(sortedSessions){
     <div class="toolbar">
       ${filterHtml}
       <div class="actions">
-        <span class="save-status" id="saveStatus">Saved</span>
+        <span class="save-status ${lastSaveFailed?'show error':''}" id="saveStatus">${lastSaveFailed?'Not saved!':'Saved'}</span>
         <button class="btn ghost" id="addExerciseBtn">+ Add exercise</button>
         <button class="btn ghost" id="planSessionBtn">Plan session</button>
         <button class="btn primary" id="logSessionBtn">Log session</button>
@@ -3180,7 +3235,7 @@ function planOneWeek(weekDates, prefs){
       const buffer = rt.hardness>=3 ? 2 : 1;
       for(let off=-buffer; off<=buffer; off++){
         const dd = new Date(r.date+'T00:00:00'); dd.setDate(dd.getDate()+off);
-        const ds = dd.toISOString().slice(0,10);
+        const ds = fmtLocalDate(dd); // local, not UTC — toISOString() slipped a day during BST
         const existingInfo = hardRunInfo.get(ds);
         if(!existingInfo || rt.hardness>existingInfo.hardness) hardRunInfo.set(ds, {hardness:rt.hardness, run:r});
       }
@@ -3314,7 +3369,7 @@ function renderAutoPlanTab(){
         <button class="btn ghost" data-del-run="${r.date}" style="padding:2px 8px;font-size:11px;" title="Remove run">×</button>
       </span>
     `).join('')}</div>` : `<div class="tips-box"><h3>No running plan yet</h3><ul>
-        <li>Import a screenshot of your schedule, or add runs manually, so leg days can automatically avoid your hard efforts.</li>
+        <li>${hasClaude() ? 'Import a screenshot of your schedule, or add runs manually' : 'Add your runs'}, so leg days can automatically avoid your hard efforts.</li>
         <li>Or skip this and just generate a lifting schedule — you can always adjust days by hand.</li>
       </ul></div>`;
 
@@ -3363,10 +3418,10 @@ function renderAutoPlanTab(){
   app.innerHTML = `
     <div class="cat-block">
       <div class="cat-block-head"><div class="cat-block-title">Your running plan</div></div>
-      <p class="modal-sub" style="margin:0 0 14px;">Upload a screenshot of your Runna (or any running app) schedule, or add runs by hand — long runs, tempo efforts and races get kept clear of leg days.</p>
-      <input type="file" id="runnaFile" accept="image/*" style="margin-bottom:10px;">
+      <p class="modal-sub" style="margin:0 0 14px;">${hasClaude() ? 'Upload a screenshot of your Runna (or any running app) schedule, or add runs by hand' : 'Add your runs'} — long runs, tempo efforts and races get kept clear of leg days.</p>
+      ${hasClaude() ? `<input type="file" id="runnaFile" accept="image/*" style="margin-bottom:10px;">` : ''}
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn ghost" id="readRunnaBtn">Read from screenshot</button>
+        ${hasClaude() ? `<button class="btn ghost" id="readRunnaBtn">Read from screenshot</button>` : ''}
         <button class="btn ghost" id="addRunBtn">+ Add run manually</button>
       </div>
       <div id="runnaStatus" style="margin-top:10px;">${autoPlanState.imgLoading? '<p class="plan-loading">Reading your running schedule…</p>' : (autoPlanState.imgError? `<p class="plan-error">${escapeHtml(autoPlanState.imgError)}</p>` : '')}</div>
@@ -3388,7 +3443,7 @@ function renderAutoPlanTab(){
     </div>
   `;
 
-  document.getElementById('readRunnaBtn').addEventListener('click', async ()=>{
+  if(document.getElementById('readRunnaBtn')) document.getElementById('readRunnaBtn').addEventListener('click', async ()=>{
     const file = document.getElementById('runnaFile').files[0];
     if(!file){ showToast('Choose a screenshot first.'); return; }
     autoPlanState.imgLoading = true; autoPlanState.imgError = null; render();
@@ -3571,6 +3626,8 @@ const DEFAULT_REP_RANGE = { low:6, high:10 };
  *  exercise has no explicit range set, infer one from the movement type instead. */
 function inferRepRange(name){
   const n = (name||'').toLowerCase();
+  if(/single-leg|single leg/.test(n) && /deadlift|rdl/.test(n)) return { low:8, high:12 };
+  if(/romanian|\brdl\b|stiff-?leg/.test(n)) return { low:6, high:10 };
   if(/deadlift|back squat|front squat|barbell bench|overhead press|power clean|snatch|clean and jerk|trap bar/.test(n)) return { low:3, high:6 };
   if(/squat|bench|press|row|pulldown|pull-?up|chin-?up|dip|hip thrust|leg press|split squat|lunge|step-?up/.test(n)) return { low:6, high:10 };
   if(/plank|hold|carry/.test(n)) return { low:20, high:60 };
@@ -3713,46 +3770,69 @@ function rampWarning(analysis){
  * nonsense like "8 more reps to 15". Ties break toward the heavier load.
  * Sets lighter than the working weight are treated as warm-ups and preserved as-is.
  */
+/**
+ * The log doesn't record what each set was for, so this reads it from the shape of
+ * the session. The heaviest load is the top set. Lighter sets after it are
+ * back-offs. Lighter sets before it are warm-ups — unless they're close to the top
+ * weight (85%+) with at least as many reps, which makes them ascending working sets
+ * (80×6, 80×6, 90×6 is three working sets, not two warm-ups and one set).
+ * Returns one role per set: 'warmup' | 'work' | 'top' | 'backoff'.
+ */
+function classifySets(sets){
+  const isLoaded = (s)=>s && s.weight && s.weight.type==='kg' && !s.isSeconds && isPlausibleSet(s);
+  const loaded = sets.filter(isLoaded);
+  if(!loaded.length) return sets.map(()=>'work');
+  const top = Math.max(...loaded.map(s=>s.weight.value));
+  const firstTop = sets.findIndex(s=>isLoaded(s) && s.weight.value===top);
+  const topMinReps = Math.min(...loaded.filter(s=>s.weight.value===top).map(s=>s.reps));
+  return sets.map((s,i)=>{
+    if(!isLoaded(s)) return 'work';
+    if(s.weight.value===top) return 'top';
+    if(i>firstTop) return 'backoff';
+    return (s.weight.value >= top*0.85 && s.reps >= topMinReps) ? 'work' : 'warmup';
+  });
+}
 function analyseWorkSets(sets){
   const loaded = sets.filter(s=>s.weight && s.weight.type==='kg' && !s.isSeconds);
   if(!loaded.length){
-    return { bodyweight:true, workSets:sets.slice(), warmups:[], minReps: sets.length ? Math.min(...sets.map(s=>s.reps)) : 0 };
+    return { bodyweight:true, workSets:sets.slice(), structure:sets.slice(), roles:sets.map(()=>'work'), warmups:[], minReps: sets.length ? Math.min(...sets.map(s=>s.reps)) : 0 };
   }
-  const counts = new Map();
-  loaded.forEach(s=>counts.set(s.weight.value, (counts.get(s.weight.value)||0)+1));
-  let workingWeight = null, bestCount = -1;
-  [...counts.entries()].forEach(([wt,c])=>{
-    if(c>bestCount || (c===bestCount && wt>workingWeight)){ workingWeight = wt; bestCount = c; }
-  });
-  const workSets = loaded.filter(s=>s.weight.value===workingWeight);
-  const warmups = sets.filter(s=>s.weight && s.weight.type==='kg' && !s.isSeconds && s.weight.value < workingWeight);
+  const roles = classifySets(sets);
+  const topSets = sets.filter((s,i)=>roles[i]==='top');
+  const workingWeight = topSets[0].weight.value;
+  const rirs = topSets.map(s=>s.rir).filter(r=>r!=null);
   return {
-    bodyweight:false, workingWeight, workSets, warmups,
-    minReps: Math.min(...workSets.map(s=>s.reps)),
-    perSide: workSets.some(s=>s.perSide),
-    isSeconds: workSets.some(s=>s.isSeconds),
-    rir: workSets.map(s=>s.rir).filter(r=>r!=null).length ? Math.min(...workSets.map(s=>s.rir==null?99:s.rir)) : null,
+    bodyweight:false, workingWeight, roles,
+    workSets: topSets,
+    structure: sets.filter((s,i)=>roles[i]!=='warmup'), // everything but warm-ups, in order
+    warmups: sets.filter((s,i)=>roles[i]==='warmup'),
+    minReps: Math.min(...topSets.map(s=>s.reps)),
+    perSide: topSets.some(s=>s.perSide),
+    isSeconds: topSets.some(s=>s.isSeconds),
+    rir: rirs.length===topSets.length ? Math.min(...rirs) : null,
   };
 }
-
 /**
- * Decides the next target from the last session's working sets, and explains itself.
- *
- * Key rule: when the weight goes up, reps reset to the BOTTOM of the range. Carrying
- * top-of-range reps onto a heavier load is what produced "16kg x10 x3 -> 18kg x10 x3",
- * a 12.5% jump with no rep relief, which nobody was ever going to hit.
+ * Next session = last session's structure, adjusted — never redefined. Working
+ * sets, top sets and back-offs all carry over in order; only the numbers move:
+ *  - every top set reached the top of the rep range (or felt easy: RIR 3+ on all
+ *    of them) → add load across the working block, top sets back to the bottom of
+ *    the range;
+ *  - within the range → one more rep on the weakest top set (7,7,5 → 7,7,6; the
+ *    good sets aren't dragged down to match the weak one);
+ *  - below the range → repeat it as logged and consolidate.
  */
 function decideProgression(ex, analysis){
   const { low, high } = repRangeFor(ex);
   const exName = ex ? ex.name : '';
+  const clean = (s)=>{ const c = Object.assign({}, s, { weight: s.weight ? Object.assign({}, s.weight) : s.weight, rir:null }); delete c.machine; return c; };
 
   if(analysis.bodyweight){
-    const reps = analysis.minReps;
     const timed = analysis.workSets.some(s=>s.isSeconds);
     const step = timed ? 5 : 1;
     return {
       action:'reps',
-      sets: analysis.workSets.map(s=>Object.assign({}, s, { reps: s.reps + step })),
+      sets: analysis.workSets.map(s=>Object.assign(clean(s), { reps: s.reps + step })),
       why: timed
         ? `+${step}s per hold — no load to add, so time keeps climbing`
         : `+${step} rep — no load to add, so reps keep climbing`,
@@ -3760,76 +3840,95 @@ function decideProgression(ex, analysis){
     };
   }
 
-  const { workingWeight, workSets, minReps } = analysis;
-  const count = workSets.length;
-  const mk = (weight, reps)=> new Array(count).fill(0).map(()=>({
-    weight:{type:'kg', value:weight}, reps, perSide:analysis.perSide, isSeconds:false, rir:null,
-  }));
+  const { workingWeight, minReps } = analysis;
+  const structure = analysis.structure.map(clean);
+  const topIdx = structure.map((s,i)=>i).filter(i=>structure[i].weight && structure[i].weight.type==='kg' && structure[i].weight.value===workingWeight);
+  const easy = analysis.rir!=null && analysis.rir>=3;
 
-  // fell short of the range: hold and consolidate rather than loading up
   if(minReps < low){
     return {
       action:'hold',
-      sets: mk(workingWeight, minReps),
+      sets: structure,
       why: `held at ${workingWeight}kg — ${minReps} rep${minReps===1?'':'s'} is below the ${low}–${high} range`,
-      hint: `${low}–${high} rep range · get all sets to ${low}+ before adding load`,
+      hint: `${low}–${high} rep range · get every top set to ${low}+ before adding load`,
     };
   }
 
-  // at the top of the range: add load AND drop back to the bottom of the range
-  if(minReps >= high){
+  if(minReps >= high || easy){
     const inc = incrementFor(workingWeight, exName);
     const newWeight = roundToHalf(workingWeight + inc);
+    const sets = structure.map((s,i)=>{
+      if(!s.weight || s.weight.type!=='kg' || s.isSeconds) return s;
+      const moved = Object.assign(s, { weight:{type:'kg', value: roundToHalf(s.weight.value + inc)} });
+      if(topIdx.includes(i) && !easy) moved.reps = low;
+      return moved;
+    });
     return {
       action:'weight',
-      sets: mk(newWeight, low),
-      why: minReps > high
-        ? `${minReps} reps at ${workingWeight}kg is past the ${low}–${high} range, so +${roundToHalf(inc)}kg and back to ${low} reps`
-        : `hit ${high} reps at ${workingWeight}kg, so +${roundToHalf(inc)}kg and back to ${low} reps`,
+      sets,
+      why: easy && minReps < high
+        ? `every top set felt easy (RIR ${analysis.rir}+), so +${roundToHalf(inc)}kg`
+        : `hit ${minReps}+ reps at ${workingWeight}kg, so +${roundToHalf(inc)}kg and back to ${low} reps`,
       hint: `${low}–${high} rep range · build back up to ${high} at ${newWeight}kg`,
     };
   }
 
-  // inside the range: add a rep
-  const next = minReps + 1;
+  // in range: one more rep on the weakest top set (the last one, if tied)
+  let weakest = topIdx[0];
+  topIdx.forEach(i=>{ if(structure[i].reps <= structure[weakest].reps) weakest = i; });
+  structure[weakest].reps += 1;
+  const lowest = Math.min(...topIdx.map(i=>structure[i].reps));
   return {
     action:'reps',
-    sets: mk(workingWeight, next),
-    why: `+1 rep at ${workingWeight}kg`,
-    hint: `${low}–${high} rep range · ${high-next} more rep${high-next===1?'':'s'} (to ${high}) earns the weight jump`,
+    sets: structure,
+    why: `+1 rep on your weakest set at ${workingWeight}kg`,
+    hint: `${low}–${high} rep range · every top set to ${high} earns the weight jump${lowest<high?` (${high-lowest} to go on the weakest)`:''}`,
   };
 }
-
-/** machineId defaults to the machine you're currently using for this exercise; only
- *  history from that same machine counts, since weights don't carry across machines. */
+/** Most recent logged entry for an exercise at a gym. When that gym has nothing
+ *  yet, falls back to entries logged before gyms were tracked — flagged as such,
+ *  since they may have been on different equipment. */
+function lastEntryFor(exId, sortedSessions, machineId){
+  const find = (mId)=>{
+    for(let i=sortedSessions.length-1; i>=0; i--){
+      const sets = DATA.cells[exId+'|'+sortedSessions[i].id];
+      if(sets && sets.length && machineOfSets(sets)===mId) return { sets, session: sortedSessions[i] };
+    }
+    return null;
+  };
+  const own = find(machineId);
+  if(own || !machineId) return own ? Object.assign(own, { untagged:false }) : null;
+  const old = find('');
+  return old ? Object.assign(old, { untagged:true }) : null;
+}
+/** machineId defaults to the gym you're at now for machine/cable work; only
+ *  history from that gym counts, since machines don't carry across. */
 function deterministicSuggestionFor(exId, sortedSessions, machineId){
   const ex = DATA.exercises.find(e=>e.id===exId);
   if(machineId===undefined) machineId = currentMachineFor(ex);
-  for(let i=sortedSessions.length-1; i>=0; i--){
-    const sets = DATA.cells[exId+'|'+sortedSessions[i].id];
-    if(!sets || !sets.length || machineOfSets(sets)!==machineId) continue;
-
-    const analysis = analyseWorkSets(sets);
-    const decision = decideProgression(ex, analysis);
-    const workWeight = decision.sets.length && decision.sets[0].weight && decision.sets[0].weight.type==='kg'
-      ? decision.sets[0].weight.value : null;
-    // For ramped compounds, prescribe a fresh warm-up rather than copying last
-    // session's — otherwise a fatiguing ramp gets repeated forever.
-    const warmups = (workWeight && isRampedCompound(ex, workWeight))
-      ? buildWarmups(workWeight, ex)
-      : analysis.warmups.map(s=>Object.assign({}, s));
-    const newSets = warmups.concat(decision.sets);
-    return {
-      suggestion: setsToText(newSets),
-      note: decision.why,
-      hint: decision.hint,
-      action: decision.action,
-      warning: rampWarning(analysis),
-    };
+  const last = lastEntryFor(exId, sortedSessions, machineId);
+  if(!last){
+    return { suggestion: '', note: machinesUsedFor(exId).length
+        ? 'Nothing logged at '+machineName(machineId)+' yet — machines differ between gyms, so this is a fresh start'
+        : 'No history yet for this one — starting point is a guess', hint:'', action:'none' };
   }
-  return { suggestion: '', note: machinesUsedFor(exId).length
-      ? 'No history on '+machineName(machineId)+' yet — other machines load differently, so this is a fresh start'
-      : 'No history yet for this one — starting point is a guess', hint:'', action:'none' };
+  const analysis = analyseWorkSets(last.sets);
+  const decision = decideProgression(ex, analysis);
+  const loads = decision.sets.filter(s=>s.weight && s.weight.type==='kg' && !s.isSeconds).map(s=>s.weight.value);
+  const topWeight = loads.length ? Math.max(...loads) : null;
+  // For ramped compounds, prescribe a fresh warm-up rather than copying last
+  // session's — otherwise a fatiguing ramp gets repeated forever.
+  const warmups = (topWeight && isRampedCompound(ex, topWeight))
+    ? buildWarmups(topWeight, ex)
+    : analysis.warmups.map(s=>{ const c = Object.assign({}, s, {rir:null}); delete c.machine; return c; });
+  const untaggedNote = last.untagged ? ' · based on sets logged before gyms were tracked, so check the weight' : '';
+  return {
+    suggestion: setsToText(warmups.concat(decision.sets)),
+    note: decision.why + untaggedNote,
+    hint: decision.hint + untaggedNote,
+    action: decision.action,
+    warning: rampWarning(analysis),
+  };
 }
 
 function buildDeterministicSuggestions(cat, reducePct, opts){
@@ -4115,9 +4214,11 @@ function setsByMuscle(weeks){
       const sets = cellSets(ex.id+'|'+sess.id);
       if(!sets.length) return;
       const muscles = MUSCLE_MAP[ex.name] || guessMuscles(ex.name);
+      // warm-ups prime the lift; they aren't training volume
+      const workingSets = classifySets(sets).filter(r=>r!=='warmup').length;
       Object.entries(muscles).forEach(([m, involvement])=>{
         const credit = setCredit(involvement);
-        if(credit) bump(m, wi, credit * sets.length);
+        if(credit) bump(m, wi, credit * workingSets);
       });
     });
   });
@@ -4442,51 +4543,45 @@ function makeSessionId(dateVal){
   return dateVal+'-'+n;
 }
 
-/** Creates a new session for today, copying forward every exercise that was
- *  actually logged in `sourceSessionId`, with progression applied per exercise
- *  from your real training history (same rule the rest of the app uses).
- *  Writes real logged sets immediately with no later review step, so it needs
- *  a confirmation up front — same standard as Reset/Import. Used by the Today
- *  card's "repeat last session" quick action. */
-async function repeatSpecificSession(sourceSessionId){
+/** Starts today's workout from `sourceSessionId`: every exercise that was logged
+ *  there (whatever its split), with progression applied to each as a target. It's
+ *  a plan, not a record — nothing counts as done until you log it — so there's
+ *  nothing to confirm; the workout screen just opens. Used by the Today card's
+ *  "repeat last session" quick action. */
+function repeatSpecificSession(sourceSessionId){
   const source = DATA.sessions.find(s=>s.id===sourceSessionId);
   if(!source){ showToast('Could not find that session.'); return; }
-  const cat = source.cat;
   const todayStr = todayLocal();
-  if(DATA.sessions.some(s=>s.date===todayStr && s.cat===cat)){ showToast('You already have a '+CATS[cat].label.toLowerCase()+' session today.'); return; }
-  const hasAnything = DATA.exercises.some(e=>e.cat===cat && cellSets(e.id+'|'+source.id).length);
-  if(!hasAnything){ showToast('Nothing logged in that session to repeat.'); return; }
-  const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
-
-  const ok = await confirmDialog(
-    'Log a new '+CATS[cat].label.toLowerCase()+' session for today, repeating '+source.label+' with progression applied? This writes sets immediately, as if already done.',
-    'Log it');
-  if(!ok) return;
-
-  const id = makeSessionId(todayStr);
-  const d = new Date(todayStr+'T00:00:00');
-  const label = d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
-  DATA.sessions.push({id, date:todayStr, label, cat, targets:{}});
-
-  DATA.exercises.filter(e=>e.cat===cat).forEach(e=>{
-    const oldSets = cellSets(e.id+'|'+source.id);
-    if(!oldSets.length) return;
-    const { suggestion } = deterministicSuggestionFor(e.id, sortedSessions);
-    if(suggestion) setCellFromText(e.id+'|'+id, suggestion);
-    else DATA.cells[e.id+'|'+id] = oldSets.map(s=>Object.assign({}, s));
-  });
-  scheduleSave();
-  showToast('Repeated '+source.label+' with progression applied.');
-  currentTab = 'log'; activeCat = cat; render();
+  const existing = DATA.sessions.find(s=>s.date===todayStr && s.cat===source.cat && !sessionHasActual(s));
+  if(existing){ openWorkoutMode(existing.id); return; }
+  const exIds = DATA.exercises.filter(e=>cellSets(e.id+'|'+source.id).length).map(e=>e.id);
+  if(!exIds.length){ showToast('Nothing logged in that session to repeat.'); return; }
+  const id = createPlannedSession(todayStr, source.cat, exIds, source);
+  render();
+  openWorkoutMode(id);
 }
-/** Plans a new session — same exercises as sourceSessionId, with progression
- *  applied to each target — for a date you pick. Nothing gets marked as done;
- *  it lands as a normal planned session, editable and loggable like any other. */
+/** A new planned session holding exactly `exIds`, in the source's order, each with
+ *  a progression target. Targets only: nothing is logged. */
+function createPlannedSession(dateVal, cat, exIds, source){
+  const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
+  const id = makeSessionId(dateVal);
+  const label = new Date(dateVal+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+  const targets = {};
+  exIds.forEach(exId=>{
+    const { suggestion } = deterministicSuggestionFor(exId, sortedSessions);
+    targets[exId] = suggestion ? parseSetsFromText(suggestion) : [];
+  });
+  const order = source ? buildPoolForSession(source, sortedSessions, 6, 2).map(e=>e.id).filter(x=>exIds.includes(x)) : exIds.slice();
+  DATA.sessions.push({id, date:dateVal, label, cat, targets, order});
+  scheduleSave();
+  return id;
+}
 function planSpecificSession(sourceSessionId){
   const source = DATA.sessions.find(s=>s.id===sourceSessionId);
   if(!source){ showToast('Could not find that session.'); return; }
   const cat = source.cat;
-  const exIds = DATA.exercises.filter(e=>e.cat===cat && cellSets(e.id+'|'+source.id).length).map(e=>e.id);
+  // every exercise you actually did — a deadlift in a pull session is still part of it
+  const exIds = DATA.exercises.filter(e=>cellSets(e.id+'|'+source.id).length).map(e=>e.id);
   if(!exIds.length){ showToast('Nothing logged in that session to plan from.'); return; }
 
   const todayStr = todayLocal();
@@ -4510,27 +4605,19 @@ function planSpecificSession(sourceSessionId){
       showToast('You already have a '+CATS[cat].label.toLowerCase()+' session on that date.');
       return;
     }
-    const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
-    const id = makeSessionId(dateVal);
+    createPlannedSession(dateVal, cat, exIds, source);
     const label = new Date(dateVal+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
-    const targets = {};
-    exIds.forEach(exId=>{
-      const { suggestion } = deterministicSuggestionFor(exId, sortedSessions);
-      targets[exId] = suggestion ? parseSetsFromText(suggestion) : [];
-    });
-    DATA.sessions.push({id, date:dateVal, label, cat, targets});
-    scheduleSave();
     closeModal();
     showToast('Planned for '+label+', based on '+source.label+'.');
     render();
   });
 }
-async function repeatLastSession(cat){
+function repeatLastSession(cat){
   const todayStr = todayLocal();
   const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   const lastSession = sortedSessions.filter(s=>s.cat===cat && s.date<=todayStr).slice(-1)[0];
   if(!lastSession){ showToast('No previous '+CATS[cat].label.toLowerCase()+' session to repeat yet.'); return; }
-  await repeatSpecificSession(lastSession.id);
+  repeatSpecificSession(lastSession.id);
 }
 function saveSessionAsTemplate(sessionId, defaultName){
   const session = DATA.sessions.find(s=>s.id===sessionId);
@@ -4553,7 +4640,6 @@ function applyTemplate(templateId, dateVal, useProgression){
   const d = new Date(dateVal+'T00:00:00');
   const label = d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
   const todayStr = todayLocal();
-  const isFuture = dateVal > todayStr;
   const targets = {};
   // compute progression from history BEFORE the new (empty) session exists, so
   // deterministicSuggestionFor can't ever accidentally see it mid-loop
@@ -4566,8 +4652,7 @@ function applyTemplate(templateId, dateVal, useProgression){
       const { suggestion } = deterministicSuggestionFor(te.exId, sortedSessions);
       if(suggestion) sets = parseSetsFromText(suggestion);
     }
-    if(isFuture) targets[te.exId] = sets;
-    else DATA.cells[te.exId+'|'+id] = tagSets(sets, machineForNewSets(te.exId+'|'+id));
+    targets[te.exId] = sets; // a template is a plan whatever the date — only logging makes it done
   });
   scheduleSave();
   return {id, cat:template.cat};
@@ -4650,8 +4735,26 @@ function openWorkoutMode(sessionId){
   const priorSessions = sortedSessions.filter(s=>s.id!==session.id);
   const rebuildPool = ()=>buildPoolForSession(session, sortedSessions, 6, 2);
   let pool = rebuildPool();
+  // A blank session's exercises are only suggestions until the workout starts. Pin
+  // them now, so the session has its own explicit list — otherwise logging the
+  // first exercise made the rest (never written down anywhere) vanish.
+  if(!sessionHasActual(session) && !Object.keys(session.targets||{}).length && pool.length){
+    session.targets = {};
+    pool.forEach(e=>{
+      const { suggestion } = deterministicSuggestionFor(e.id, priorSessions);
+      session.targets[e.id] = suggestion ? parseSetsFromText(suggestion) : [];
+    });
+    session.order = pool.map(e=>e.id);
+    scheduleSave();
+  }
   let prsThisWorkout = 0;
-  const drafts = {};        // exId -> sets on screen that haven't been logged yet
+  // exId -> sets still to do (on screen, not logged yet). Kept in this browser so an
+  // unfinished workout survives a reload or the phone killing the tab.
+  const DRAFT_KEY = 'workoutDrafts:'+sessionId;
+  let drafts = {};
+  try{ drafts = JSON.parse(localStorage.getItem(DRAFT_KEY)||'{}') || {}; }catch(e){ drafts = {}; }
+  const saveDrafts = ()=>{ try{ localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts)); }catch(e){} };
+  const clearDrafts = ()=>{ try{ localStorage.removeItem(DRAFT_KEY); }catch(e){} };
   const typing = new Set(); // exIds switched over to the free-text box
   const prTimers = {};
   const exById = (id)=>DATA.exercises.find(e=>e.id===id);
@@ -4668,16 +4771,22 @@ function openWorkoutMode(sessionId){
 
   const historyFor = (ex)=>{
     const machineId = gymFor(ex);
-    const recentSets = [];
-    for(let i=priorSessions.length-1; i>=0 && recentSets.length<2; i--){
-      const sets = DATA.cells[ex.id+'|'+priorSessions[i].id];
-      if(sets && sets.length && machineOfSets(sets)===machineId){
-        recentSets.push({
-          dateLabel: new Date(priorSessions[i].date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}),
-          text: setsToText(sets),
-        });
+    const collect = (mId)=>{
+      const out = [];
+      for(let i=priorSessions.length-1; i>=0 && out.length<2; i--){
+        const sets = DATA.cells[ex.id+'|'+priorSessions[i].id];
+        if(sets && sets.length && machineOfSets(sets)===mId){
+          out.push({
+            dateLabel: new Date(priorSessions[i].date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + (mId!==machineId ? ', no gym recorded' : ''),
+            text: setsToText(sets),
+          });
+        }
       }
-    }
+      return out;
+    };
+    let recentSets = collect(machineId);
+    // a gym with nothing of its own yet falls back to history from before gyms were tracked
+    if(!recentSets.length && machineId) recentSets = collect('');
     const { low, high } = repRangeFor(ex);
     if(!recentSets.length){
       const elsewhere = machinesUsedFor(ex.id).some(m=>m!==machineId);
@@ -4690,6 +4799,7 @@ function openWorkoutMode(sessionId){
   };
 
   const isTimed = (ex)=>/plank|hold|carry|\bhang|wall sit/i.test(ex.name);
+  const stripForDraft = (s)=>{ const c = cloneSet(s); c.rir = null; delete c.machine; return c; };
   const draftFor = (ex)=>{
     if(drafts[ex.id]) return drafts[ex.id];
     let sets = targetSets(session, ex.id);
@@ -4699,39 +4809,44 @@ function openWorkoutMode(sessionId){
       const weight = equipmentOf(ex)==='bodyweight' || isTimed(ex) ? {type:'bw'} : {type:'kg', value:0};
       sets = [0,1,2].map(()=>({ weight, reps:low, perSide:false, isSeconds:isTimed(ex), rir:null }));
     }
-    // a plan is a target, not a record: drop last time's effort ratings and gym tag
-    return (drafts[ex.id] = sets.map(s=>{ const c = cloneSet(s); c.rir = null; delete c.machine; return c; }));
+    // what's still to do = the plan minus the sets already logged
+    // (a plan is a target, not a record: no effort ratings or gym tags carried over)
+    return (drafts[ex.id] = sets.slice(cellSets(keyOf(ex.id)).length).map(stripForDraft));
   };
-  const setsFor = (exId)=>{
-    const logged = cellSets(keyOf(exId));
-    return logged.length ? { sets: logged, logged: true } : { sets: draftFor(exById(exId)), logged: false };
-  };
+  const loggedFor = (exId)=>DATA.cells[keyOf(exId)] || [];
+  const arrFor = (src, exId)=> src==='log' ? loggedFor(exId) : draftFor(exById(exId));
 
-  const stepBtn = (exId, i, field, dir, label)=>
-    `<button type="button" data-step="${field}" data-dir="${dir}" data-ex="${exId}" data-i="${i}" aria-label="${label}">${dir<0?'−':'+'}</button>`;
-  const setRowsHTML = (ex, sets)=>sets.map((s,i)=>{
+  const stepBtn = (src, exId, i, field, dir, label)=>
+    `<button type="button" data-step="${field}" data-src="${src}" data-dir="${dir}" data-ex="${exId}" data-i="${i}" aria-label="${label}">${dir<0?'−':'+'}</button>`;
+  // one row per set: logged sets first (ticked), then the ones still to do. Tap the
+  // circle as each set's done; ✓ Done logs everything left in one go.
+  const setRowHTML = (ex, s, i, n, src)=>{
     const loaded = s.weight && s.weight.type==='kg';
     const w = loaded
-      ? `<div class="stepper">${stepBtn(ex.id,i,'w',-1,'Less weight')}<span class="set-val ${s.weight.value?'':'unset'}">${s.weight.value}<small>kg</small></span>${stepBtn(ex.id,i,'w',1,'More weight')}</div>`
+      ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<span class="set-val ${s.weight.value?'':'unset'}">${s.weight.value}<small>kg</small></span>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
       : `<div class="stepper static"><span class="set-val">${formatWeight(s.weight)}</span></div>`;
-    const r = `<div class="stepper">${stepBtn(ex.id,i,'r',-1,'Fewer')}<span class="set-val">${s.reps}<small>${s.isSeconds?'sec':'reps'}${s.perSide?' ea':''}</small></span>${stepBtn(ex.id,i,'r',1,'More')}</div>`;
-    return `<div class="set-row"><span class="set-n">${i+1}</span>${w}${r}<button type="button" class="set-del" data-del-set="${ex.id}" data-i="${i}" aria-label="Remove set">×</button></div>`;
-  }).join('');
+    const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<span class="set-val">${s.reps}<small>${s.isSeconds?'sec':'reps'}${s.perSide?' ea':''}</small></span>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
+    const tick = src==='log'
+      ? `<button type="button" class="set-tick on" data-untick="${ex.id}" data-i="${i}" aria-label="Set ${n} done — tap to undo">✓</button>`
+      : `<button type="button" class="set-tick" data-tick="${ex.id}" data-i="${i}" aria-label="Mark set ${n} done">${n}</button>`;
+    return `<div class="set-row ${src==='log'?'is-done':''}">${tick}${w}${r}<button type="button" class="set-del" data-del-set="${ex.id}" data-src="${src}" data-i="${i}" aria-label="Remove set">×</button></div>`;
+  };
 
   const rowHTML = (e, i)=>{
-    const { sets, logged } = setsFor(e.id);
+    const logged = loggedFor(e.id), todo = draftFor(e);
+    const done = logged.length>0 && !todo.length;
     const h = historyFor(e);
     const body = typing.has(e.id)
-      ? `<input type="text" value="${escapeHtml(logged?setsToText(sets):'').replace(/"/g,'&quot;')}" data-workout-ex="${e.id}" placeholder="${escapeHtml(setsToText(sets)||'e.g. 50kg 8, 8, 8')}">
+      ? `<input type="text" value="${escapeHtml(setsToText(logged)).replace(/"/g,'&quot;')}" data-workout-ex="${e.id}" placeholder="${escapeHtml(setsToText(todo)||'e.g. 50kg 8, 8, 8')}">
          <div class="workout-actions"><button type="button" class="btn ghost" data-type-done="${e.id}">Use buttons</button></div>`
-      : `<div class="set-list">${setRowsHTML(e, sets)}</div>
+      : `<div class="set-list">${logged.map((s,i)=>setRowHTML(e, s, i, i+1, 'log')).join('')}${todo.map((s,i)=>setRowHTML(e, s, i, logged.length+i+1, 'draft')).join('')}</div>
          <div class="workout-actions">
-           ${logged ? `<span class="logged-tag">✓ Logged</span><button type="button" class="btn ghost" data-unlog="${e.id}">Undo</button>`
-                    : `<button type="button" class="btn primary btn-log" data-log="${e.id}" ${sets.length?'':'disabled'}>✓ Done</button>`}
+           ${todo.length ? `<button type="button" class="btn primary btn-log" data-log="${e.id}" title="Log ${logged.length?'the remaining sets':'every set'} as shown">✓ Done</button>`
+                         : logged.length ? `<span class="logged-tag">✓ Logged</span><button type="button" class="btn ghost" data-unlog="${e.id}">Undo</button>` : ''}
            <button type="button" class="btn ghost" data-add-set="${e.id}">+ Set</button>
            <button type="button" class="btn ghost" data-type="${e.id}">Type</button>
          </div>`;
-    return `<div class="workout-ex ${logged?'done':''}" data-workout-row="${e.id}">
+    return `<div class="workout-ex ${done?'done':''}" data-workout-row="${e.id}">
       <div class="workout-ex-head">
         <div class="workout-ex-name">${i+1}. ${escapeHtml(e.name)}</div>
         <div class="workout-ex-move">
@@ -4818,22 +4933,23 @@ function openWorkoutMode(sessionId){
     if(raw === cellText(key)) return;
     if(!raw){
       if(cellSets(key).length){
-        drafts[exId] = cellSets(key).map(s=>{ const c = cloneSet(s); delete c.machine; return c; });
+        drafts[exId] = cellSets(key).map(stripForDraft); saveDrafts();
         delete DATA.cells[key];
         rebuildPRRecordsFromHistory();
       }
     } else {
       if(!parseSetsFromText(raw).length){ showToast("Couldn't read that — try something like 50kg 8, 8, 8"); return; }
       setCellFromText(key, raw);
+      drafts[exId] = []; saveDrafts(); // typed = the full record for this exercise
       prsThisWorkout += checkForPR(exId, exById(exId).name, sessionId);
       warnIfOddReps(exId, sessionId);
     }
     scheduleSave(); updateStatRow();
     const row = input.closest('[data-workout-row]');
-    if(row) row.classList.toggle('done', cellSets(key).length>0);
+    if(row) row.classList.toggle('done', cellSets(key).length>0 && !draftFor(exById(exId)).length);
   };
   const flushTyped = ()=>overlay.querySelectorAll('[data-workout-ex]').forEach(commitText);
-  const resetGymDrafts = ()=>Object.keys(drafts).forEach(id=>{ if(isGymSpecific(exById(id))) delete drafts[id]; });
+  const resetGymDrafts = ()=>{ Object.keys(drafts).forEach(id=>{ if(isGymSpecific(exById(id))) delete drafts[id]; }); saveDrafts(); };
   // moving the session to a gym takes whatever machine work is already logged with it
   const setSessionGym = (gymId)=>{
     session.gym = gymId; DATA.currentGym = gymId;
@@ -4851,70 +4967,108 @@ function openWorkoutMode(sessionId){
     if(!b || !overlay.contains(b) || b.disabled) return;
     const d = b.dataset;
 
+    const needsWeight = (sets)=>sets.some(x=>x.weight && x.weight.type==='kg' && !x.weight.value);
+    const advanceFrom = (exId)=>{
+      // carry on to the next exercise still to do
+      const rows = [...overlay.querySelectorAll('[data-workout-row]')];
+      const at = rows.findIndex(r=>r.dataset.workoutRow===exId);
+      const next = rows.slice(at+1).concat(rows.slice(0, at)).find(r=>!r.classList.contains('done'));
+      if(next) next.scrollIntoView({behavior:'smooth', block:'start'});
+    };
+    const logSets = (ex, sets)=>{
+      DATA.cells[keyOf(ex.id)] = loggedFor(ex.id).concat(tagSets(sets.map(cloneSet), gymFor(ex)));
+      scheduleSave(); updateStatRow();
+      prsThisWorkout += checkForPR(ex.id, ex.name, sessionId);
+    };
     if(d.step){
-      const { sets, logged } = setsFor(d.ex);
-      const i = +d.i, dir = +d.dir, s = sets[i];
-      if(!s) return;
+      const sets = arrFor(d.src, d.ex);
+      const i = +d.i, dir = +d.dir, st = sets[i];
+      if(!st) return;
       if(d.step==='w'){
-        const old = s.weight.value;
-        const step = (dir>0 ? old : old-0.001) < 10 ? 0.5 : (dir>0 ? old : old-0.001) < 20 ? 1 : 2.5;
+        const old = st.weight.value;
+        const base = dir>0 ? old : old-0.001;
+        const step = base < 10 ? 0.5 : base < 20 ? 1 : 2.5;
         const nv = Math.max(0, Math.round((old + dir*step)*100)/100);
         // the sets after this one at the same weight move with it, so changing
         // the working weight is one tap rather than one per set
-        s.weight = {type:'kg', value:nv};
+        st.weight = {type:'kg', value:nv};
         for(let j=i+1; j<sets.length && sets[j].weight && sets[j].weight.type==='kg' && sets[j].weight.value===old; j++){
           sets[j].weight = {type:'kg', value:nv};
         }
+        if(d.src==='log'){ // and on into the sets still to do
+          const todo = draftFor(exById(d.ex));
+          if(i===sets.length-1 || sets.slice(i+1).every(x=>x.weight && x.weight.value===nv))
+            for(let j=0; j<todo.length && todo[j].weight && todo[j].weight.type==='kg' && todo[j].weight.value===old; j++) todo[j].weight = {type:'kg', value:nv};
+        }
       } else {
-        const step = s.isSeconds ? 5 : 1;
-        s.reps = Math.max(step, s.reps + dir*step);
+        const step = st.isSeconds ? 5 : 1;
+        st.reps = Math.max(step, st.reps + dir*step);
       }
-      if(logged) savedEdit(d.ex, dir<0);
+      if(d.src==='log') savedEdit(d.ex, dir<0);
+      saveDrafts();
       refreshRow(d.ex);
+      return;
+    }
+    if(d.tick){
+      const ex = exById(d.tick);
+      const todo = draftFor(ex);
+      const st = todo[+d.i];
+      if(!st) return;
+      if(needsWeight([st])){ showToast('Set the weight with + first.'); return; }
+      todo.splice(+d.i, 1);
+      logSets(ex, [st]);
+      saveDrafts();
+      refreshRow(ex.id);
+      if(!todo.length) advanceFrom(ex.id);
+      return;
+    }
+    if(d.untick){
+      const logged = loggedFor(d.untick);
+      const [st] = logged.splice(+d.i, 1);
+      if(!st) return;
+      draftFor(exById(d.untick)).unshift(stripForDraft(st));
+      if(!logged.length) delete DATA.cells[keyOf(d.untick)];
+      rebuildPRRecordsFromHistory();
+      scheduleSave(); updateStatRow(); saveDrafts();
+      refreshRow(d.untick);
       return;
     }
     if(d.log){
       const ex = exById(d.log);
-      const sets = draftFor(ex);
-      if(sets.some(s=>s.weight && s.weight.type==='kg' && !s.weight.value)){
-        showToast('Set the weight with + first.');
-        return;
-      }
-      DATA.cells[keyOf(ex.id)] = tagSets(sets.map(cloneSet), gymFor(ex));
-      delete drafts[ex.id];
-      scheduleSave(); updateStatRow();
-      prsThisWorkout += checkForPR(ex.id, ex.name, sessionId);
+      const todo = draftFor(ex);
+      if(needsWeight(todo)){ showToast('Set the weight with + first.'); return; }
+      logSets(ex, todo);
+      drafts[ex.id] = [];
+      saveDrafts();
       refreshRow(ex.id);
-      // carry on to the next exercise still to do
-      const rows = [...overlay.querySelectorAll('[data-workout-row]')];
-      const at = rows.findIndex(r=>r.dataset.workoutRow===ex.id);
-      const next = rows.slice(at+1).concat(rows.slice(0, at)).find(r=>!r.classList.contains('done'));
-      if(next) next.scrollIntoView({behavior:'smooth', block:'start'});
+      advanceFrom(ex.id);
       return;
     }
     if(d.unlog){
-      const key = keyOf(d.unlog);
-      drafts[d.unlog] = cellSets(key).map(s=>{ const c = cloneSet(s); delete c.machine; return c; });
-      delete DATA.cells[key];
+      drafts[d.unlog] = loggedFor(d.unlog).map(stripForDraft).concat(draftFor(exById(d.unlog)));
+      delete DATA.cells[keyOf(d.unlog)];
       rebuildPRRecordsFromHistory();
-      scheduleSave(); updateStatRow();
+      scheduleSave(); updateStatRow(); saveDrafts();
       refreshRow(d.unlog);
       return;
     }
     if(d.addSet){
-      const { sets, logged } = setsFor(d.addSet);
-      const last = sets[sets.length-1];
       const ex = exById(d.addSet);
-      sets.push(last ? cloneSet(last) : { weight: equipmentOf(ex)==='bodyweight' ? {type:'bw'} : {type:'kg', value:0}, reps: repRangeFor(ex).low, perSide:false, isSeconds:isTimed(ex), rir:null });
-      if(logged) savedEdit(d.addSet, false);
-      refreshRow(d.addSet);
+      const todo = draftFor(ex), logged = loggedFor(ex.id);
+      const last = todo[todo.length-1] || logged[logged.length-1];
+      todo.push(last ? stripForDraft(last) : { weight: equipmentOf(ex)==='bodyweight' ? {type:'bw'} : {type:'kg', value:0}, reps: repRangeFor(ex).low, perSide:false, isSeconds:isTimed(ex), rir:null });
+      saveDrafts();
+      refreshRow(ex.id);
       return;
     }
     if(d.delSet){
-      const { sets, logged } = setsFor(d.delSet);
+      const sets = arrFor(d.src, d.delSet);
       sets.splice(+d.i, 1);
-      if(logged && !sets.length){ delete DATA.cells[keyOf(d.delSet)]; drafts[d.delSet] = []; }
-      if(logged) savedEdit(d.delSet, true);
+      if(d.src==='log'){
+        if(!sets.length) delete DATA.cells[keyOf(d.delSet)];
+        savedEdit(d.delSet, true);
+      }
+      saveDrafts();
       refreshRow(d.delSet);
       return;
     }
@@ -4943,14 +5097,9 @@ function openWorkoutMode(sessionId){
       flushTyped();
       const name = await promptGymName('Add a gym', '');
       if(!name) return;
-      const { id, adopted } = addGym(name);
+      const { id } = addGym(name);
       setSessionGym(id);
       renderAll();
-      if(adopted.length) showToast(`Your earlier machine & cable logs now count as ${name}.`, ()=>{
-        adopted.forEach(k=>tagSets(DATA.cells[k], ''));
-        rebuildPRRecordsFromHistory(); resetGymDrafts(); scheduleSave();
-        if(document.body.contains(overlay)) renderAll();
-      });
       return;
     }
     if(d.editGyms!==undefined){
@@ -5004,6 +5153,8 @@ function openWorkoutMode(sessionId){
     }
     if(d.finish!==undefined){
       flushTyped();
+      if(sessionHasActual(session)){ session.finished = true; scheduleSave(); }
+      clearDrafts();
       Object.values(prTimers).forEach(clearTimeout);
       overlay.remove();
       showWorkoutSummary(session, pool, priorSessions, prsThisWorkout);
@@ -5037,15 +5188,21 @@ function compareTargetToActual(targetSetsArr, actualSetsArr){
   if(!targetSetsArr.length) return 'logged';
   const verdict = (a,b)=> a>b ? 'beaten' : a<b ? 'short' : 'met';
   const totalReps = (arr)=>arr.reduce((n,x)=>n+(x.reps||0),0);
+  const loaded = (s)=>s.weight && s.weight.type==='kg' && !s.isSeconds && isPlausibleSet(s);
+  const tLoaded = targetSetsArr.filter(loaded), aLoaded = actualSetsArr.filter(loaded);
 
-  const topWeightOf = (arr)=>Math.max(...arr.map(s=>s.weight && s.weight.type==='kg' && !s.isSeconds ? s.weight.value : 0));
-  const targetTopWeight = topWeightOf(targetSetsArr);
-  const actualTopWeight = topWeightOf(actualSetsArr);
-
-  // loaded work: heaviest weight first, then total reps at that level
-  if(targetTopWeight>0 || actualTopWeight>0){
-    if(actualTopWeight!==targetTopWeight) return verdict(actualTopWeight, targetTopWeight);
-    return verdict(totalReps(actualSetsArr), totalReps(targetSetsArr));
+  // Loaded work: only the prescribed working sets count — warm-up reps can't make
+  // up for missing work, and one heavier single doesn't complete 3×10.
+  if(tLoaded.length){
+    const tTop = Math.max(...tLoaded.map(s=>s.weight.value));
+    const tWork = tLoaded.filter(s=>s.weight.value===tTop);
+    const aWork = aLoaded.filter(s=>s.weight.value>=tTop);
+    const aTop = aLoaded.length ? Math.max(...aLoaded.map(s=>s.weight.value)) : 0;
+    const enoughSets = aWork.length >= tWork.length;
+    if(enoughSets && totalReps(aWork) >= totalReps(tWork)){
+      return (totalReps(aWork) > totalReps(tWork) || aTop > tTop) ? 'beaten' : 'met';
+    }
+    return aTop > tTop ? 'heavier' : 'short';
   }
 
   // timed work (planks, holds, carries): compare total time under tension. Comparing
@@ -5059,7 +5216,7 @@ function compareTargetToActual(targetSetsArr, actualSetsArr){
   // unloaded rep work (pull-ups, dips, bodyweight): compare total reps, not set count
   return verdict(totalReps(actualSetsArr), totalReps(targetSetsArr));
 }
-const TARGET_VERDICT_LABEL = { beaten:'Target beaten', met:'Target met', short:'Held short', logged:'Logged' };
+const TARGET_VERDICT_LABEL = { beaten:'Target beaten', met:'Target met', short:'Held short', heavier:'Heavier, fewer reps', logged:'Logged' };
 
 function showWorkoutSummary(session, pool, priorSessions, prsThisWorkout){
   let totalSets = 0, volumeKg = 0;
@@ -5300,7 +5457,7 @@ function openPlanSessionModal(defaultCat, defaultDate){
         </div>
         ` : `
         <p class="modal-sub" style="margin:4px 0 10px;">${state.source==='ai' ? 'Refined by AI. ' : state.source==='template' ? 'Loaded from your template, with progression applied where possible. ' : state.source==='manual' ? 'Blank plan — add exercises below. ' : 'Suggested from your training history. '}Edit, remove, or add exercises before saving the plan.${state.freeWeightsOnly?' Restricted to free weights and bodyweight.':''}</p>
-        ${state.source!=='ai' ? `<button class="btn ghost" id="refineAiBtn" style="margin-bottom:14px;" ${state.aiLoading?'disabled':''}>Refine with AI instead</button>` : ''}
+        ${state.source!=='ai' && hasClaude() ? `<button class="btn ghost" id="refineAiBtn" style="margin-bottom:14px;" ${state.aiLoading?'disabled':''}>Refine with AI instead</button>` : ''}
         `}
         <div id="aiRowHost">${aiRow}</div>
         <div id="suggBlockHost">${suggBlock}</div>
@@ -6209,6 +6366,7 @@ document.getElementById('importFileInput').addEventListener('change', async (e)=
 (async function init(){
   await loadData();
   migrateData();
+  updateStorageNote();
   render();
   setTimeout(flagOddRepsInLog, 900);
 })();

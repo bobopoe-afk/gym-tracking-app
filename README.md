@@ -95,13 +95,27 @@ Worth knowing so you don't rediscover these the hard way:
 - Logging one exercise in a session no longer hides the rest of what was
   planned for it (a real bug — display-only, never touched the underlying
   data, but fixed).
+- Set roles (`classifySets`): the log doesn't store them, so they're read
+  from the session's shape — heaviest load = top set, lighter sets after it
+  = back-offs, lighter sets before it = warm-ups unless they're 85%+ of the
+  top weight with as many reps (ascending working sets). Progression keeps
+  last session's structure and adjusts it (`decideProgression`); muscle
+  set counts and target verdicts ignore warm-ups.
+- Repeat / Plan like this / templates only ever create targets; sets become
+  history only by logging them. A workout opened on a blank session pins
+  its exercises into `session.targets` so the list is explicit; Finish sets
+  `session.finished`.
+- Saving: `persist()` reports failures ("Not saved!" + export prompt);
+  outside Claude there's no 12s wait for the bridge and AI-only controls
+  are hidden. Unfinished workout sets are kept in localStorage
+  (`workoutDrafts:<sessionId>`).
 - Logging is tap-based: each exercise in the workout screen is pre-filled
   with today's sets (plan targets, else the progression suggestion); ✓ logs
   them, +/− adjusts weight or reps (a weight change carries to the later
   sets at the same weight). Typing is still available behind "Type".
 - Machine and cable weights are tracked per gym: pick the gym once at the
-  top of a workout (remembered). The first gym you add takes over your
-  existing machine/cable history (undoable from the toast).
+  top of a workout (remembered). History from before gyms existed stays
+  untagged and is used as a labelled fallback until a gym has its own.
 - Pop-ups don't auto-focus fields on touch screens and the page behind
   them is scroll-locked — both caused the page to jump on phones.
 - PR records are a derived cache: rebuilt from `DATA.cells` on load and on
