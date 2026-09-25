@@ -1,0 +1,95 @@
+# Training Log
+
+A single-file training log app: exercise tracking, progression suggestions,
+session planning, PRs, and a running-schedule overlay. No build step, no
+dependencies — everything (HTML, CSS, JS) lives in `index.html`.
+
+## Running it
+
+Just open `index.html` in a browser. That's it.
+
+## ⚠️ Storage — the one thing to know before you touch anything
+
+This app was built and run inside a Claude.ai artifact, which offers an
+optional `window.claude.use('db')` bridge for account-level, cross-device
+storage. The code:
+
+1. Waits briefly for `window.claude` to appear (`waitForClaudeBridge`).
+2. If found, tries to use it for storage (`STORAGE_MODE = 'db'`).
+3. If not found, or anything about it fails, it **falls back to plain
+   `localStorage`** — silently, with no error shown to the user.
+
+**Outside of Claude.ai (i.e. anywhere you run this from now on), step 1 will
+always fail** — there's no `window.claude` on GitHub Pages, Vercel, a local
+file, etc. That's not a bug; the fallback was built for exactly this. But it
+means:
+
+- Data is saved per-browser (`localStorage`), same as before you had the
+  Claude db integration working.
+- **No cross-device sync** — this was the entire point of the db capability,
+  and you'll lose it the moment this runs outside Claude.
+- The "Storage debug" link in the footer will report the bridge as never
+  found. That's expected here, not an error.
+
+**If you want real cross-device sync again**, the cleanest path is to swap
+the storage layer for a real backend — Supabase and Firebase both work well
+for this shape of data (one JSON blob per user, `get`/`set` on load/save).
+The two functions to replace are `loadData()` and `persist()`
+(search for `DB.doc(` — both are right around there). Everything else in the
+app talks to `DATA` (a big in-memory object) and calls `persist()` after any
+change, so the rest of the code doesn't need to know or care where storage
+actually lives.
+
+Data export/import (footer: Export data / Import file / Copy data / Paste
+data) works regardless of storage backend, since it just serializes `DATA`
+directly — handy for migrating data once you've picked a new backend.
+
+## Orientation — it's one big file, here's the map
+
+Search for these to jump around:
+
+- `const DATA = ` / `seedData()` — the whole app's state shape and the
+  sample data it starts with on a fresh install
+- `function loadData()` / `function persist()` — storage (see above)
+- `const CATS = ` — the exercise categories (push/pull/leg/bilat/aux) and
+  their colors
+- `function buildSessionPool` / `function buildPoolForSession` — decides
+  which exercises get suggested for a new session, in what order
+  (compound-first, then accessory; aux always last)
+- `function decideProgression` / `function deterministicSuggestionFor` —
+  the progression engine: reads your actual logged history for an exercise
+  and works out a next-step suggestion
+- `function repRangeFor` — per-exercise rep range (inferred by name, or an
+  explicit override you've set)
+- `function openWorkoutMode` — the main session editor: logging sets, the
+  exercise search/swap picker, reordering
+- `function openDayModal` — the Calendar tab's per-day view: logged +
+  still-planned exercises, Move/Delete/Copy/Open/Plan-like-this
+- `function planSpecificSession` — "Plan like this": copy a past session's
+  exercises into a new planned session on a chosen date, with progression
+  applied to the targets (nothing gets marked as done)
+- `function repeatSpecificSession` — the Today card's "repeat last session"
+  quick action: same idea, but logs it immediately as done (used with a
+  confirm step, since it writes real data)
+- `function sessionStatus` — planned / in-progress / completed / missed,
+  computed per-exercise rather than as a single flag (this matters: a
+  session with 1 of 5 exercises logged is "in-progress," not "completed")
+
+## What's already been fixed / built out
+
+Worth knowing so you don't rediscover these the hard way:
+
+- Warm-up ramps for barbell compounds are generated fresh each session
+  rather than copied forward from your last logged ramp (which was
+  fatiguing people before their work sets).
+- The exercise picker (add/swap) is a live search, not a long alphabetical
+  `<select>`.
+- A session's exercise order defaults to compound-first, accessory-second,
+  with aux/core always last — unless you've manually reordered it, which
+  always wins.
+- Logging one exercise in a session no longer hides the rest of what was
+  planned for it (a real bug — display-only, never touched the underlying
+  data, but fixed).
+- No rest timer. It was removed on request — it fired unpredictably from
+  three different logging paths with no way to see it coming or configure
+  it.
