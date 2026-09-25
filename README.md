@@ -71,6 +71,10 @@ Search for these to jump around:
 - `function repeatSpecificSession` — the Today card's "repeat last session"
   quick action: same idea, but logs it immediately as done (used with a
   confirm step, since it writes real data)
+- `/* ---------- machines` — per-machine history. Each logged entry's sets
+  carry a `machine` id (from `DATA.machines`), and suggestions, PRs
+  (`prKey(exId, machineId)`), charts and 1RM estimates only compare entries
+  on the same machine. Untagged entries are their own bucket.
 - `function sessionStatus` — planned / in-progress / completed / missed,
   computed per-exercise rather than as a single flag (this matters: a
   session with 1 of 5 exercises logged is "in-progress," not "completed")
@@ -90,6 +94,11 @@ Worth knowing so you don't rediscover these the hard way:
 - Logging one exercise in a session no longer hides the rest of what was
   planned for it (a real bug — display-only, never touched the underlying
   data, but fixed).
+- The same exercise on different machines (another gym, a cable stack with
+  a different number of pulleys) is tracked separately: pick the machine
+  when logging, and progression, PRs and charts stay within it. Old
+  untagged entries can be moved onto a machine from the exercise's detail
+  page.
 - No rest timer. It was removed on request — it fired unpredictably from
   three different logging paths with no way to see it coming or configure
   it.

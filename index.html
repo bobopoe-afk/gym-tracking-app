@@ -305,6 +305,11 @@
 
   /* ---------- workout mode ---------- */
   .workout-overlay{ position:fixed; inset:0; background:var(--bg); z-index:300; overflow-y:auto; padding:24px; }
+  /* dialogs and toasts opened mid-workout have to stack above the workout overlay */
+  .workout-overlay ~ .modal-backdrop{ z-index:350; }
+  .workout-overlay ~ .toast{ z-index:360; }
+  .machine-select{ background:var(--surface-2); border:1px solid var(--border); color:var(--text); padding:4px 6px; border-radius:2px; font-size:12px; max-width:100%; }
+  .workout-ex-machine{ display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:12px; color:var(--text-dim); flex-wrap:wrap; }
   .workout-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; }
   .workout-title{ font-family:'Bebas Neue',sans-serif; font-size:32px; }
   .workout-ex{ background:var(--surface); border:1px solid var(--border); border-radius:2px; padding:18px; margin-bottom:14px; transition:border-color .2s ease; }
@@ -640,10 +645,18 @@ function estimate1RMWithRIR(weightKg, reps, rir){
 }
 
 function cellSets(key){ return DATA.cells[key] || []; }
+/** Machine for sets about to be written to `key`: re-typing an entry keeps its
+ *  machine; a brand new entry goes on the exercise's current machine. */
+function machineForNewSets(key){
+  const existing = DATA.cells[key];
+  if(existing && existing.length) return machineOfSets(existing);
+  const ex = DATA.exercises.find(e=>e.id===key.slice(0, key.indexOf('|')));
+  return currentMachineFor(ex);
+}
 function cellText(key){ const s = DATA.cells[key]; return (s && s.length) ? setsToText(s) : ''; }
 function setCellFromText(key, text){
   const sets = parseSetsFromText(text);
-  if(sets.length){ DATA.cells[key] = sets; } else { delete DATA.cells[key]; }
+  if(sets.length){ DATA.cells[key] = tagSets(sets, machineForNewSets(key)); } else { delete DATA.cells[key]; }
   return sets;
 }
 /* ---------- planned targets vs actual performance ----------
@@ -1020,7 +1033,7 @@ function seedData(){
 
   Object.keys(cells).forEach(k=>{ cells[k] = parseSetsFromText(cells[k]); });
 
-  return {sessions, exercises, cells, theme:'iron', runSchedule:[], prRecords:{}, templates:[]};
+  return {sessions, exercises, cells, theme:'iron', runSchedule:[], prRecords:{}, templates:[], machines:[]};
 }
 
 /* ============================= STATE ============================= */
@@ -1086,6 +1099,7 @@ function migrateData(){
     }
   });
   if(!Array.isArray(DATA.templates)){ DATA.templates = []; changed = true; }
+  if(!Array.isArray(DATA.machines)){ DATA.machines = []; changed = true; }
   if(!Array.isArray(DATA.trash)){ DATA.trash = []; changed = true; }
   // fold near-duplicate exercise rows together before anything else touches them
   Object.entries(DUPLICATE_MERGES).forEach(([fromId, toId])=>{
@@ -1605,6 +1619,180 @@ function equipmentOf(ex){
 function isFreeWeightFriendly(ex){
   const eq = equipmentOf(ex);
   return eq==='free' || eq==='bodyweight';
+}
+
+/* ---------- machines ----------
+   The same exercise on a different machine isn't the same lift: a cable stack with
+   two pulleys reads double the weight of a single-pulley one, and one brand's chest
+   press is nothing like another's. Each logged entry can be tagged with the machine
+   it was done on (stored on its sets as `machine`, so the tag travels with the sets
+   through moves, merges, trash and export), and everything that compares against
+   history — suggestions, PRs, charts, 1RM estimates — only looks at entries from the
+   same machine. Untagged entries are their own bucket, so existing history behaves
+   exactly as before until you tag it. */
+function machineById(id){ return id ? (DATA.machines||[]).find(m=>m.id===id) || null : null; }
+function machineName(id){ const m = machineById(id); return m ? m.name : 'Unspecified machine'; }
+/** Machine an entry was logged on ('' when untagged). */
+function machineOfSets(sets){ return (sets && sets.length && sets[0].machine) || ''; }
+function machineOfCell(key){ return machineOfSets(DATA.cells[key]); }
+/** The machine you're using for this exercise now: whichever was picked for it last. */
+function currentMachineFor(ex){ return (ex && machineById(ex.lastMachine)) ? ex.lastMachine : ''; }
+function tagSets(sets, machineId){
+  (sets||[]).forEach(s=>{ if(machineId) s.machine = machineId; else delete s.machine; });
+  return sets;
+}
+/** Machine and cable work is where the picker matters; anything already on a machine keeps it. */
+function usesMachinePicker(ex){
+  const eq = equipmentOf(ex);
+  return eq==='machine' || eq==='cable' || !!currentMachineFor(ex);
+}
+/** PR records are kept per exercise per machine. Untagged keeps the plain exercise id. */
+function prKey(exId, machineId){ return machineId ? exId+'@'+machineId : exId; }
+function parsePRKey(key){ const i = key.indexOf('@'); return i<0 ? {exId:key, machineId:''} : {exId:key.slice(0,i), machineId:key.slice(i+1)}; }
+/** Machines this exercise has history on, most-used first ('' = untagged). */
+function machinesUsedFor(exId){
+  const counts = {};
+  Object.keys(DATA.cells).forEach(k=>{
+    if(!k.startsWith(exId+'|')) return;
+    const mId = machineOfCell(k);
+    counts[mId] = (counts[mId]||0)+1;
+  });
+  return Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+}
+function machineSelectHTML(id, selectedId, extraAttrs){
+  const opts = [`<option value="" ${!selectedId?'selected':''}>Unspecified machine</option>`]
+    .concat((DATA.machines||[]).map(m=>`<option value="${m.id}" ${m.id===selectedId?'selected':''}>${escapeHtml(m.name)}</option>`))
+    .concat([`<option value="__new__">+ New machine…</option>`, `<option value="__manage__">Rename / remove machines…</option>`]);
+  return `<select ${id?`id="${id}"`:''} ${extraAttrs||''} class="machine-select">${opts.join('')}</select>`;
+}
+/** Wires a machine <select>: the two action options open their dialogs, and the
+ *  select snaps back to its previous value if they're cancelled. */
+function wireMachineSelect(select, onChange){
+  let prev = select.value;
+  select.addEventListener('change', async ()=>{
+    const v = select.value;
+    if(v==='__new__'){
+      const name = await promptMachineName('New machine', '');
+      if(!name){ select.value = prev; return; }
+      const m = { id: 'm-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name };
+      DATA.machines = (DATA.machines||[]).concat([m]);
+      const opt = document.createElement('option'); opt.value = m.id; opt.textContent = m.name;
+      select.insertBefore(opt, select.querySelector('option[value="__new__"]'));
+      select.value = m.id; prev = m.id;
+      scheduleSave();
+      onChange(m.id);
+      return;
+    }
+    if(v==='__manage__'){
+      select.value = prev;
+      openManageMachinesModal();
+      return;
+    }
+    prev = v;
+    onChange(v);
+  });
+}
+/** Stand-alone text prompt that stacks above whatever's open (closeModal would take
+ *  the modal underneath down with it). Resolves to the trimmed name, or null. */
+function promptMachineName(title, initial){
+  return new Promise(resolve=>{
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.style.zIndex = 400;
+    wrap.innerHTML = `<div class="modal" style="max-width:420px;">
+      <h2>${escapeHtml(title)}</h2>
+      <p class="modal-sub">Name it so you'll recognise it — gym and machine, plus anything that changes the numbers, like the pulley setup.</p>
+      <div class="field"><input type="text" id="machName" value="${escapeHtml(initial)}" placeholder="e.g. Town gym – cable stack (2 pulleys)"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cCancel">Cancel</button>
+        <button class="btn primary" id="cOk">Save</button>
+      </div>
+    </div>`;
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector('#machName');
+    const done = (v)=>{ wrap.remove(); resolve(v); };
+    const ok = ()=>{ const n = input.value.trim(); if(n) done(n); else input.focus(); };
+    wrap.addEventListener('click', e=>{ if(e.target===wrap) done(null); });
+    wrap.querySelector('#cCancel').addEventListener('click', ()=>done(null));
+    wrap.querySelector('#cOk').addEventListener('click', ok);
+    input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); ok(); } else if(e.key==='Escape'){ e.stopPropagation(); done(null); } });
+    setTimeout(()=>{ input.focus(); input.select(); }, 20);
+  });
+}
+/** Every entry logged on a machine, as a count. */
+function entriesOnMachine(machineId){
+  return Object.keys(DATA.cells).filter(k=>machineOfCell(k)===machineId).length;
+}
+/** Retags every entry for one exercise that's currently on `fromMachine`. */
+function retagExerciseEntries(exId, fromMachine, toMachine){
+  const keys = Object.keys(DATA.cells).filter(k=>k.startsWith(exId+'|') && machineOfCell(k)===fromMachine);
+  keys.forEach(k=>tagSets(DATA.cells[k], toMachine));
+  return keys;
+}
+function openManageMachinesModal(){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.style.zIndex = 400;
+  const draw = ()=>{
+    const list = DATA.machines||[];
+    wrap.innerHTML = `<div class="modal" style="max-width:480px;">
+      <h2>Machines</h2>
+      <p class="modal-sub">Suggestions, PRs and charts only compare sets done on the same machine.</p>
+      ${list.length ? list.map(m=>`<div class="plan-row">
+        <span class="plan-row-date" style="flex:1;">${escapeHtml(m.name)}</span>
+        <span style="font-size:11.5px;color:var(--text-faint);margin-right:8px;">${entriesOnMachine(m.id)} entr${entriesOnMachine(m.id)===1?'y':'ies'}</span>
+        <button class="btn ghost" data-rename="${m.id}">Rename</button>
+        <button class="btn ghost" data-remove="${m.id}">Remove</button>
+      </div>`).join('') : '<p class="calc-none">No machines saved yet — pick "+ New machine…" from any machine dropdown.</p>'}
+      <div class="modal-actions"><button class="btn primary" id="cDone">Done</button></div>
+    </div>`;
+    wrap.querySelector('#cDone').addEventListener('click', finish);
+    wrap.querySelectorAll('[data-rename]').forEach(b=>b.addEventListener('click', async ()=>{
+      const m = machineById(b.dataset.rename);
+      const name = await promptMachineName('Rename machine', m.name);
+      if(name){ m.name = name; scheduleSave(); draw(); }
+    }));
+    wrap.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click', async ()=>{
+      const m = machineById(b.dataset.remove);
+      const n = entriesOnMachine(m.id);
+      const ok = await confirmDialogAbove(`Remove "${m.name}"?`+(n ? `\n\nIts ${n} logged entr${n===1?'y':'ies'} will become "Unspecified machine" and be compared with your other untagged history.` : ''), 'Remove');
+      if(!ok) return;
+      Object.keys(DATA.cells).forEach(k=>{ if(machineOfCell(k)===m.id) tagSets(DATA.cells[k], ''); });
+      DATA.exercises.forEach(e=>{ if(e.lastMachine===m.id) delete e.lastMachine; });
+      DATA.machines = list.filter(x=>x.id!==m.id);
+      rebuildPRRecordsFromHistory();
+      removedAny = true;
+      scheduleSave(); draw();
+    }));
+  };
+  let removedAny = false;
+  // refresh every open machine dropdown in place, so whatever's open underneath
+  // (an entry being edited, a workout) keeps its state
+  const finish = ()=>{
+    wrap.remove();
+    document.querySelectorAll('select.machine-select').forEach(sel=>{
+      const keep = machineById(sel.value) ? sel.value : '';
+      const tmp = document.createElement('div');
+      tmp.innerHTML = machineSelectHTML('', keep);
+      sel.innerHTML = tmp.firstElementChild.innerHTML;
+      sel.value = keep;
+    });
+    // a removal moves history between buckets, so a live workout's "last time" lines are stale
+    if(removedAny) document.querySelectorAll('.workout-overlay').forEach(o=>{
+      const sid = o.dataset.sessionId; o.remove(); if(sid) openWorkoutMode(sid);
+    });
+    render();
+  };
+  wrap.addEventListener('click', e=>{ if(e.target===wrap) finish(); });
+  draw();
+  document.body.appendChild(wrap);
+}
+/** confirmDialog, stacked above a z-raised modal. */
+function confirmDialogAbove(message, okLabel){
+  const p = confirmDialog(message, okLabel);
+  const all = document.querySelectorAll('.modal-backdrop');
+  all[all.length-1].style.zIndex = 450;
+  return p;
 }
 
 /** Days since a muscle was last directly trained; never-trained counts as heavily neglected. */
@@ -2153,7 +2341,7 @@ function openCellEditor(td){
   const commit = ()=>{
     if(committed) return; committed = true;
     const raw = input.value.trim();
-    const newSets = raw ? parseSetsFromText(raw) : [];
+    const newSets = tagSets(raw ? parseSetsFromText(raw) : [], machineForNewSets(key));
     const v = newSets.length ? setsToText(newSets) : '';
     const changed = v !== currentText;
     if(newSets.length){ DATA.cells[key] = newSets; } else { delete DATA.cells[key]; }
@@ -2266,6 +2454,7 @@ function openEditEntryModal(sessionId, exId){
   const ex = DATA.exercises.find(e=>e.id===exId);
   if(!session || !ex) return;
   const currentText = cellText(exId+'|'+sessionId);
+  const currentMachine = machineOfCell(exId+'|'+sessionId);
   const options = DATA.exercises.slice().sort((a,b)=>a.name.localeCompare(b.name))
     .map(e=>`<option value="${e.id}" ${e.id===exId?'selected':''}>${escapeHtml(e.name)} — ${CATS[e.cat].label}</option>`).join('');
 
@@ -2282,6 +2471,10 @@ function openEditEntryModal(sessionId, exId){
         <label for="fEntrySets">Sets</label>
         <input type="text" id="fEntrySets" value="${escapeHtml(currentText).replace(/"/g,'&quot;')}" style="font-family:'IBM Plex Mono',monospace;">
       </div>
+      <div class="field">
+        <label>Machine — sets are only compared with others done on the same one</label>
+        ${machineSelectHTML('fEntryMachine', currentMachine)}
+      </div>
       <div class="modal-actions">
         <button class="btn ghost" id="mDelete">Delete entry</button>
         <button class="btn ghost" id="mCancel">Cancel</button>
@@ -2291,6 +2484,7 @@ function openEditEntryModal(sessionId, exId){
 
   m.querySelector('#mClose').addEventListener('click', closeModal);
   m.querySelector('#mCancel').addEventListener('click', closeModal);
+  wireMachineSelect(m.querySelector('#fEntryMachine'), ()=>{});
 
   m.querySelector('#mDelete').addEventListener('click', async ()=>{
     closeModal();
@@ -2307,7 +2501,8 @@ function openEditEntryModal(sessionId, exId){
 
   m.querySelector('#mSave').addEventListener('click', ()=>{
     const newExId = m.querySelector('#fEntryEx').value;
-    const sets = parseSetsFromText(m.querySelector('#fEntrySets').value.trim());
+    const machineId = m.querySelector('#fEntryMachine').value;
+    const sets = tagSets(parseSetsFromText(m.querySelector('#fEntrySets').value.trim()), machineId);
     const prevOld = DATA.cells[exId+'|'+sessionId];
     const prevNew = DATA.cells[newExId+'|'+sessionId];
     if(!sets.length){ showToast("Couldn't read those sets — leaving the entry as it was."); return; }
@@ -2315,19 +2510,25 @@ function openEditEntryModal(sessionId, exId){
     if(newExId!==exId){
       delete DATA.cells[exId+'|'+sessionId];
       // if the target already had sets logged this session, keep both
-      DATA.cells[newExId+'|'+sessionId] = (prevNew||[]).concat(sets);
+      DATA.cells[newExId+'|'+sessionId] = tagSets((prevNew||[]).map(x=>Object.assign({}, x)).concat(sets), machineId);
       // carry any per-session ordering/exclusion across with it
       if(Array.isArray(session.order)) session.order = session.order.map(id=>id===exId?newExId:id);
     } else {
       DATA.cells[exId+'|'+sessionId] = sets;
     }
     const newEx = DATA.exercises.find(e=>e.id===newExId);
+    const machineChanged = machineId !== currentMachine;
+    if(machineChanged && newEx && machineId) newEx.lastMachine = machineId;
     scheduleSave();
-    checkForPR(newExId, newEx?newEx.name:newExId, sessionId);
+    // a different machine moves this entry to another history, so replay PRs rather
+    // than announcing "records" measured against the wrong machine
+    if(machineChanged) rebuildPRRecordsFromHistory();
+    else checkForPR(newExId, newEx?newEx.name:newExId, sessionId);
     render();
     showToast(newExId!==exId ? 'Moved to '+(newEx?newEx.name:'the new exercise')+'.' : 'Entry updated.', ()=>{
       if(prevOld) DATA.cells[exId+'|'+sessionId] = prevOld; else delete DATA.cells[exId+'|'+sessionId];
       if(prevNew) DATA.cells[newExId+'|'+sessionId] = prevNew; else if(newExId!==exId) delete DATA.cells[newExId+'|'+sessionId];
+      if(machineChanged) rebuildPRRecordsFromHistory();
       scheduleSave(); render();
     });
     closeModal();
@@ -3571,11 +3772,14 @@ function decideProgression(ex, analysis){
   };
 }
 
-function deterministicSuggestionFor(exId, sortedSessions){
+/** machineId defaults to the machine you're currently using for this exercise; only
+ *  history from that same machine counts, since weights don't carry across machines. */
+function deterministicSuggestionFor(exId, sortedSessions, machineId){
   const ex = DATA.exercises.find(e=>e.id===exId);
+  if(machineId===undefined) machineId = currentMachineFor(ex);
   for(let i=sortedSessions.length-1; i>=0; i--){
     const sets = DATA.cells[exId+'|'+sortedSessions[i].id];
-    if(!sets || !sets.length) continue;
+    if(!sets || !sets.length || machineOfSets(sets)!==machineId) continue;
 
     const analysis = analyseWorkSets(sets);
     const decision = decideProgression(ex, analysis);
@@ -3595,7 +3799,9 @@ function deterministicSuggestionFor(exId, sortedSessions){
       warning: rampWarning(analysis),
     };
   }
-  return { suggestion: '', note: 'No history yet for this one — starting point is a guess', hint:'', action:'none' };
+  return { suggestion: '', note: machinesUsedFor(exId).length
+      ? 'No history on '+machineName(machineId)+' yet — other machines load differently, so this is a fresh start'
+      : 'No history yet for this one — starting point is a guess', hint:'', action:'none' };
 }
 
 function buildDeterministicSuggestions(cat, reducePct, opts){
@@ -3624,8 +3830,9 @@ function confidenceForReps(reps){
 }
 const CONFIDENCE_LABEL = { high:'high confidence', good:'good estimate', rough:'rough estimate', low:'speculative — that many reps stretches the formula' };
 
-function computeExerciseStats(exId, sortedSessions){
-  const points = topSetPerSession(exId, sortedSessions);
+function computeExerciseStats(exId, sortedSessions, machineId){
+  if(machineId===undefined) machineId = currentMachineFor(DATA.exercises.find(e=>e.id===exId));
+  const points = topSetPerSession(exId, sortedSessions, machineId);
   if(!points.length) return null;
   const last = points[points.length-1];
   const prev = points.length>1 ? points[points.length-2] : null;
@@ -3645,7 +3852,7 @@ function computeExerciseStats(exId, sortedSessions){
   let lastSets=[];
   for(let i=sortedSessions.length-1;i>=0;i--){
     const sets = DATA.cells[exId+'|'+sortedSessions[i].id];
-    if(sets && sets.length){ lastSets = sets; break; }
+    if(sets && sets.length && machineOfSets(sets)===machineId){ lastSets = sets; break; }
   }
   const lastTonnage = lastSets.reduce((sum,s)=> sum + (s.weight && s.weight.type==='kg' && !s.isSeconds ? s.weight.value*s.reps : 0), 0);
 
@@ -3747,8 +3954,10 @@ function rebuildPRRecordsFromHistory(){
   const rebuilt = {};
   sortedSessions.forEach(sess=>{
     DATA.exercises.forEach(ex=>{
-      if(!cellSets(ex.id+'|'+sess.id).length) return;
-      const rec = rebuilt[ex.id] || (rebuilt[ex.id] = emptyPRRecord());
+      const sets = cellSets(ex.id+'|'+sess.id);
+      if(!sets.length) return;
+      const key = prKey(ex.id, machineOfSets(sets));
+      const rec = rebuilt[key] || (rebuilt[key] = emptyPRRecord());
       applySessionToPRRecord(rec, ex.id, sess.id, sess.date, sessionE1RM(ex.id, sess.id));
     });
   });
@@ -3757,14 +3966,17 @@ function rebuildPRRecordsFromHistory(){
 
 function checkForPR(exId, exName, sessionId){
   if(!DATA.prRecords) DATA.prRecords = {};
-  const rec = DATA.prRecords[exId] || emptyPRRecord();
+  const machineId = machineOfCell(exId+'|'+sessionId);
+  const key = prKey(exId, machineId);
+  const rec = DATA.prRecords[key] || emptyPRRecord();
   const session = DATA.sessions.find(s=>s.id===sessionId);
   const dateStr = session ? session.date : todayLocal();
   const found = applySessionToPRRecord(rec, exId, sessionId, dateStr, sessionE1RM(exId, sessionId));
   if(found.length){
-    DATA.prRecords[exId] = rec;
+    DATA.prRecords[key] = rec;
     scheduleSave();
-    found.forEach(f=> showToast(`New ${PR_KIND_LABEL[f.kind]} — ${exName}: ${f.text}`));
+    const where = machineId ? ` (${machineName(machineId)})` : '';
+    found.forEach(f=> showToast(`New ${PR_KIND_LABEL[f.kind]} — ${exName}${where}: ${f.text}`));
   }
   return found.length;
 }
@@ -4133,10 +4345,12 @@ const PR_KIND_TAG_COLOR = { weight:'var(--push)', reps:'var(--pull)', e1rm:'var(
 
 function openPRsModal(){
   const rows = [];
-  Object.entries(DATA.prRecords||{}).forEach(([exId, rec])=>{
+  Object.entries(DATA.prRecords||{}).forEach(([key, rec])=>{
+    const { exId, machineId } = parsePRKey(key);
     const ex = DATA.exercises.find(e=>e.id===exId);
     if(!ex || !rec.history) return;
-    rec.history.forEach(h=>rows.push({ name:ex.name, cat:ex.cat, date:h.date, kind:h.kind, text:h.text }));
+    const name = machineId ? ex.name+' · '+machineName(machineId) : ex.name;
+    rec.history.forEach(h=>rows.push({ name, cat:ex.cat, date:h.date, kind:h.kind, text:h.text }));
   });
   rows.sort((a,b)=>b.date.localeCompare(a.date));
 
@@ -4294,7 +4508,7 @@ function applyTemplate(templateId, dateVal, useProgression){
       if(suggestion) sets = parseSetsFromText(suggestion);
     }
     if(isFuture) targets[te.exId] = sets;
-    else DATA.cells[te.exId+'|'+id] = sets;
+    else DATA.cells[te.exId+'|'+id] = tagSets(sets, currentMachineFor(DATA.exercises.find(e=>e.id===te.exId)));
   });
   scheduleSave();
   return {id, cat:template.cat};
@@ -4376,12 +4590,17 @@ function openWorkoutMode(sessionId){
   // number to hit. The old version silently baked in a fixed weight/rep jump
   // every session; this keeps the same underlying read on where you're at
   // (via the hint text) but leaves today's actual numbers to you.
-  const targetFor = (exId)=>{
+  // Which machine a row is on: what it was logged on, else the one you're using now.
+  const machineForRow = (ex)=>{
+    const logged = cellSets(ex.id+'|'+sessionId);
+    return logged.length ? machineOfSets(logged) : currentMachineFor(ex);
+  };
+  const targetFor = (exId, machineId)=>{
     const ex = DATA.exercises.find(e=>e.id===exId);
     const recentSets = [];
     for(let i=priorSessions.length-1; i>=0 && recentSets.length<2; i--){
       const sets = DATA.cells[exId+'|'+priorSessions[i].id];
-      if(sets && sets.length){
+      if(sets && sets.length && machineOfSets(sets)===machineId){
         recentSets.push({
           dateLabel: new Date(priorSessions[i].date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}),
           text: setsToText(sets),
@@ -4389,13 +4608,19 @@ function openWorkoutMode(sessionId){
       }
     }
     const { low, high } = repRangeFor(ex);
-    if(!recentSets.length) return { recentSets, hint: `${low}–${high} rep range — no history yet, so this is a starting point`, warning:null };
-    const d = deterministicSuggestionFor(exId, priorSessions);
+    if(!recentSets.length){
+      const elsewhere = machinesUsedFor(exId).length > 0;
+      return { recentSets, warning:null, hint: elsewhere
+        ? `${low}–${high} rep range — nothing logged on this machine yet (other machines load differently), so find your weight today`
+        : `${low}–${high} rep range — no history yet, so this is a starting point` };
+    }
+    const d = deterministicSuggestionFor(exId, priorSessions, machineId);
     return { recentSets, hint: d.hint, warning: d.warning };
   };
 
   const overlay = document.createElement('div');
   overlay.className = 'workout-overlay';
+  overlay.dataset.sessionId = sessionId;
   overlay.innerHTML = `
     <div class="workout-head">
       <div class="workout-title">${CATS[session.cat].label} · ${session.label}</div>
@@ -4404,7 +4629,8 @@ function openWorkoutMode(sessionId){
     ${pool.map((e,i)=>{
       const sets = cellSets(e.id+'|'+session.id);
       const done = sets.length>0;
-      const tgt = targetFor(e.id);
+      const machineId = machineForRow(e);
+      const tgt = targetFor(e.id, machineId);
       return `<div class="workout-ex ${done?'done':''}" data-workout-row="${e.id}">
         <div class="workout-ex-head">
           <div class="workout-ex-name">${i+1}. ${escapeHtml(e.name)}</div>
@@ -4415,6 +4641,7 @@ function openWorkoutMode(sessionId){
             <button class="btn ghost" data-ex-remove="${e.id}" title="Not doing this one — remove from session">×</button>
           </div>
         </div>
+        ${usesMachinePicker(e) ? `<div class="workout-ex-machine"><span>On</span>${machineSelectHTML('', machineId, `data-ex-machine="${e.id}"`)}</div>` : ''}
         ${tgt.recentSets.map((s,idx)=>`<div class="workout-ex-target">${idx===0?'Last time':'Before that'}: ${escapeHtml(s.text)} <span style="color:var(--text-faint);">(${escapeHtml(s.dateLabel)})</span></div>`).join('')}
         ${tgt.hint ? `<div class="workout-ex-hint">${escapeHtml(tgt.hint)}</div>` : ''}
         ${tgt.warning ? `<div class="workout-ex-warn">${escapeHtml(tgt.warning)}</div>` : ''}
@@ -4494,6 +4721,23 @@ function openWorkoutMode(sessionId){
       overlay.remove();
       openWorkoutMode(sessionId);
     });
+  }));
+  // Switching machine: history, hints and PRs all follow the machine, so re-open
+  // the workout against the new one. A logged entry is retagged along with it.
+  overlay.querySelectorAll('[data-ex-machine]').forEach(sel=>wireMachineSelect(sel, (machineId)=>{
+    overlay.querySelectorAll('[data-workout-ex]').forEach(inp=>{
+      const key = inp.dataset.workoutEx+'|'+sessionId;
+      const raw = inp.value.trim();
+      if(raw !== cellText(key)) setCellFromText(key, raw);
+    });
+    const exId = sel.dataset.exMachine;
+    const ex = DATA.exercises.find(e=>e.id===exId);
+    if(machineId) ex.lastMachine = machineId; else delete ex.lastMachine;
+    const logged = cellSets(exId+'|'+sessionId);
+    if(logged.length){ tagSets(logged, machineId); rebuildPRRecordsFromHistory(); }
+    scheduleSave();
+    overlay.remove();
+    openWorkoutMode(sessionId);
   }));
   overlay.querySelectorAll('[data-ex-up],[data-ex-down]').forEach(btn=>btn.addEventListener('click', ()=>{
     // commit anything typed but not yet blurred, so reordering never loses a set
@@ -4589,7 +4833,7 @@ function showWorkoutSummary(session, pool, priorSessions, prsThisWorkout){
     volumeKg += actual.reduce((s,st)=> s + (st.weight && st.weight.type==='kg' && !st.isSeconds ? st.weight.value*st.reps*(st.perSide?2:1) : 0), 0);
     const planned = targetSets(session, e.id);
     const compareAgainst = planned.length ? planned : (()=>{
-      const { suggestion } = deterministicSuggestionFor(e.id, priorSessions);
+      const { suggestion } = deterministicSuggestionFor(e.id, priorSessions, machineOfSets(actual));
       return parseSetsFromText(suggestion);
     })();
     const verdict = compareTargetToActual(compareAgainst, actual);
@@ -5171,7 +5415,7 @@ Chest supported row:
         cat = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
       }
       DATA.sessions.push({id, date:dateVal, label, cat, targets:{}});
-      resolved.forEach(r=>{ DATA.cells[r.ex.id+'|'+id] = r.sets; });
+      resolved.forEach(r=>{ DATA.cells[r.ex.id+'|'+id] = tagSets(r.sets, currentMachineFor(r.ex)); });
       resolved.forEach(r=>checkForPR(r.ex.id, r.ex.name, id));
       scheduleSave();
       close();
@@ -5234,11 +5478,12 @@ function openAddExerciseModal(prefillName){
 }
 
 /* ---------- detail modal: chart + estimator + muscle diagram ---------- */
-function topSetPerSession(exId, sortedSessions){
+function topSetPerSession(exId, sortedSessions, machineId){
+  if(machineId===undefined) machineId = currentMachineFor(DATA.exercises.find(e=>e.id===exId));
   const points = [];
   sortedSessions.forEach(s=>{
     const sets = DATA.cells[exId+'|'+s.id];
-    if(!sets || !sets.length) return;
+    if(!sets || !sets.length || machineOfSets(sets)!==machineId) return;
     const weighted = sets.filter(st=>st.weight && st.weight.type==='kg' && !st.isSeconds);
     if(weighted.length){
       const best = weighted.reduce((a,b)=> (b.weight.value>a.weight.value?b:a));
@@ -5257,9 +5502,16 @@ function topSetPerSession(exId, sortedSessions){
 function openDetailModal(exId, sortedSessions){
   const ex = DATA.exercises.find(e=>e.id===exId);
   if(!ex) return;
-  const points = topSetPerSession(exId, sortedSessions);
-  const stats = computeExerciseStats(exId, sortedSessions);
-  const prHistory = (DATA.prRecords && DATA.prRecords[exId] && DATA.prRecords[exId].history) || [];
+  // everything below is for the machine you're on now — other machines load differently
+  const machineId = currentMachineFor(ex);
+  const points = topSetPerSession(exId, sortedSessions, machineId);
+  const stats = computeExerciseStats(exId, sortedSessions, machineId);
+  const rec = DATA.prRecords && DATA.prRecords[prKey(exId, machineId)];
+  const prHistory = (rec && rec.history) || [];
+  const showMachine = usesMachinePicker(ex);
+  const otherMachines = machinesUsedFor(exId).filter(mId=>mId!==machineId);
+  const countOn = (mId)=>Object.keys(DATA.cells).filter(k=>k.startsWith(exId+'|') && machineOfCell(k)===mId).length;
+  const untaggedCount = machineId ? countOn('') : 0;
 
   const m = openModal(`
     <div class="modal wide">
@@ -5272,6 +5524,12 @@ function openDetailModal(exId, sortedSessions){
           ${Object.entries(EQUIPMENT_LABEL).map(([k,v])=>`<option value="${k}" ${equipmentOf(ex)===k?'selected':''}>${v}</option>`).join('')}
         </select>
       </div>
+      ${showMachine ? `<div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12px; color:var(--text-dim); flex-wrap:wrap;">
+        <span>Machine</span>
+        ${machineSelectHTML('fDetailMachine', machineId)}
+        ${untaggedCount ? `<button class="btn ghost" id="fDetailTagUntagged" style="font-size:11px;">Mark ${untaggedCount} untagged entr${untaggedCount===1?'y':'ies'} as this machine</button>` : ''}
+      </div>
+      <p class="calc-sub" style="margin:6px 0 0;">Stats, PRs and suggestions below are for ${escapeHtml(machineName(machineId))} only${otherMachines.length ? ' · also logged on '+otherMachines.map(mId=>escapeHtml(machineName(mId))+' ('+countOn(mId)+')').join(', ') : ''}.</p>` : ''}
       <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12px; color:var(--text-dim);">
         <span>Rep range (drives progression)</span>
         <input type="number" id="fDetailRepLow" min="1" max="50" value="${(ex.repRangeLow)||DEFAULT_REP_RANGE.low}" style="width:56px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;">
@@ -5292,6 +5550,24 @@ function openDetailModal(exId, sortedSessions){
   `);
   m.querySelector('#mClose').addEventListener('click', closeModal);
 
+  const reopen = ()=>{ closeModal(); openDetailModal(exId, sortedSessions); };
+  const machineSelect = m.querySelector('#fDetailMachine');
+  if(machineSelect) wireMachineSelect(machineSelect, (mId)=>{
+    if(mId) ex.lastMachine = mId; else delete ex.lastMachine;
+    scheduleSave(); render(); reopen();
+  });
+  const tagUntaggedBtn = m.querySelector('#fDetailTagUntagged');
+  if(tagUntaggedBtn) tagUntaggedBtn.addEventListener('click', ()=>{
+    const keys = retagExerciseEntries(exId, '', machineId);
+    const n = keys.length;
+    rebuildPRRecordsFromHistory();
+    scheduleSave(); render(); reopen();
+    showToast(`Moved ${n} entr${n===1?'y':'ies'} onto ${machineName(machineId)}.`, ()=>{
+      keys.forEach(k=>tagSets(DATA.cells[k], ''));
+      rebuildPRRecordsFromHistory();
+      scheduleSave(); render(); reopen();
+    });
+  });
   const equipSelect = m.querySelector('#fDetailEquip');
   if(equipSelect) equipSelect.addEventListener('change', e=>{
     ex.equipment = e.target.value;
@@ -5322,7 +5598,6 @@ function openDetailModal(exId, sortedSessions){
   }
 
   const prBox = m.querySelector('#prBox');
-  const rec = DATA.prRecords && DATA.prRecords[exId];
   if(prHistory.length){
     const bestLines = [];
     if(rec.weight) bestLines.push(`<li>Best weight: <b>${rec.weight.value}kg × ${rec.weight.reps}</b></li>`);
