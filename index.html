@@ -138,14 +138,17 @@
   .sess-card:hover .sess-actions, .sess-card:focus-within .sess-actions{ opacity:1; }
   .sess-mini{ padding:3px 8px; font-size:9.5px; }
   .sess-items{ margin-top:10px; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:2px 20px; }
-  .sess-item{ display:flex; justify-content:space-between; gap:12px; align-items:baseline; padding:5px 0; border-bottom:1px solid var(--border); }
+  /* name on top, sets underneath and free to wrap: long set lists used to be forced
+     onto one line and spill across into the next column */
+  .sess-item{ display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:12px; row-gap:2px; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); }
+  .sess-item > *{ min-width:0; }
   .sess-item-name{ cursor:pointer; }
   .sess-item:hover .sess-item-name{ color:var(--accent); }
-  .sess-item-edit{ padding:2px 7px; font-size:9px; opacity:0; flex-shrink:0; }
+  .sess-item-edit{ padding:2px 7px; font-size:9px; opacity:0; grid-column:2; grid-row:1 / span 2; }
   .sess-item:hover .sess-item-edit, .sess-item:focus-within .sess-item-edit{ opacity:1; }
   @media (pointer: coarse){ .sess-item-edit{ opacity:1; } }
-  .sess-item-name{ font-size:12.5px; font-weight:600; }
-  .sess-item-sets{ font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--text-dim); text-align:right; white-space:nowrap; }
+  .sess-item-name{ font-size:12.5px; font-weight:600; grid-column:1; }
+  .sess-item-sets{ font-family:'IBM Plex Mono',monospace; font-size:10.5px; line-height:1.5; color:var(--text-dim); grid-column:1; overflow-wrap:anywhere; }
   @media (max-width:640px){
     .sess-actions{ opacity:1; }
     .sess-meta{ margin-left:0; width:100%; }
