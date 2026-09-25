@@ -104,6 +104,19 @@ Worth knowing so you don't rediscover these the hard way:
   existing machine/cable history (undoable from the toast).
 - Pop-ups don't auto-focus fields on touch screens and the page behind
   them is scroll-locked — both caused the page to jump on phones.
+- PR records are a derived cache: rebuilt from `DATA.cells` on load and on
+  every render (`buildPRRecords`), so a corrected or deleted set can't
+  leave a phantom record behind. Sets with fractional reps (a typo like
+  "21.6 reps") are left out of PRs and flagged with a one-tap Fix.
+- One volume definition (`setVolumeKg`): weight × reps, "each side" sets
+  counted twice. Weights are taken as logged — the app can't tell whether
+  "14kg" dumbbells meant one or a pair, so tonnage for paired dumbbell work
+  reads low.
+- Estimated 1RM (stat, calculator and PR) only for compound lifts
+  (`usesE1RM`).
+- Warm-ups: empty bar ×10, then fewer reps as weight climbs, ending with a
+  ~92% single on heavier days; deadlifts skip the bar, machines get a
+  short ramp, isolation work none.
 - No rest timer. It was removed on request — it fired unpredictably from
   three different logging paths with no way to see it coming or configure
   it.

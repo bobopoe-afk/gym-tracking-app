@@ -700,13 +700,17 @@ function targetText(session, exId){
  * Per-side sets count both sides, since "15kg × 10 each" really is 20 reps of work.
  * Bodyweight and timed sets contribute nothing — there's no load to multiply.
  */
+/** The one definition of how much a set moved: weight × reps, with "each side"
+ *  sets counting both sides. Everything that totals volume goes through this, so
+ *  session totals, stats and volume PRs can't disagree. (A weight is taken as
+ *  logged — the app doesn't know whether "14kg" dumbbells meant one or a pair.) */
+function setVolumeKg(st){
+  if(!st || !st.weight || st.weight.type!=='kg' || st.isSeconds) return 0;
+  return st.weight.value * st.reps * (st.perSide ? 2 : 1);
+}
+function setsVolumeKg(sets){ return (sets||[]).reduce((sum, st)=>sum + setVolumeKg(st), 0); }
 function sessionVolumeKg(sessionId){
-  return DATA.exercises.reduce((total, ex)=>{
-    return total + cellSets(ex.id+'|'+sessionId).reduce((sum, st)=>{
-      if(!st.weight || st.weight.type!=='kg' || st.isSeconds) return sum;
-      return sum + st.weight.value * st.reps * (st.perSide ? 2 : 1);
-    }, 0);
-  }, 0);
+  return DATA.exercises.reduce((total, ex)=>total + setsVolumeKg(cellSets(ex.id+'|'+sessionId)), 0);
 }
 /** Compact tonnage for inline stats: 4,820kg / 12.4t */
 function formatVolume(kg){
@@ -1192,11 +1196,11 @@ function migrateData(){
   // Build PR records from everything already logged. Without this an empty (or newly
   // upgraded) PR store treats the next session as the baseline, announcing "records"
   // that your existing history already beats.
-  if(!DATA.prRecordsBackfilled){
-    rebuildPRRecordsFromHistory();
-    DATA.prRecordsBackfilled = true;
-    changed = true;
-  }
+  // PRs are derived from the log; rebuild every load so a stale record can't survive
+  const before = JSON.stringify(DATA.prRecords||{});
+  rebuildPRRecordsFromHistory();
+  DATA.prRecordsBackfilled = true;
+  if(JSON.stringify(DATA.prRecords) !== before) changed = true;
 
   // One-off cleanup: same-day sessions only ever existed because logging used to be
   // one-category-at-a-time. A session can hold any mix of exercises now, so fold those
@@ -1424,6 +1428,7 @@ function render(){
     b.onclick = ()=>{ currentTab=b.dataset.tab; render(); };
   });
 
+  rebuildPRRecordsFromHistory();
   // rebuilding the tab briefly changes the page height, which can throw the scroll
   // position around on phones — hold it where it was
   const y = scrollLockY===null ? window.scrollY : null;
@@ -1436,6 +1441,7 @@ function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'
 
 /* ============================= RENDER: LOG TAB ============================= */
 function quickEst1RM(exId, allSessions){
+  if(!usesE1RM(DATA.exercises.find(e=>e.id===exId))) return null;
   const pts = topSetPerSession(exId, allSessions).filter(p=>p.unit==='kg').slice(-3);
   if(!pts.length) return null;
   return Math.max(...pts.map(p=>estimate1RM(p.value, p.reps)));
@@ -2366,6 +2372,7 @@ function openCellEditor(td){
     if(changed && newSets.length){
       const ex = DATA.exercises.find(e=>e.id===exId);
       checkForPR(exId, ex ? ex.name : exId, sessId);
+      warnIfOddReps(exId, sessId);
     }
   };
   input.addEventListener('blur', commit);
@@ -2536,6 +2543,7 @@ function openEditEntryModal(sessionId, exId){
     if(machineChanged) rebuildPRRecordsFromHistory();
     else checkForPR(newExId, newEx?newEx.name:newExId, sessionId);
     render();
+    if(warnIfOddReps(newExId, sessionId)){ closeModal(); return; }
     showToast(newExId!==exId ? 'Moved to '+(newEx?newEx.name:'the new exercise')+'.' : 'Entry updated.', ()=>{
       if(prevOld) DATA.cells[exId+'|'+sessionId] = prevOld; else delete DATA.cells[exId+'|'+sessionId];
       if(prevNew) DATA.cells[newExId+'|'+sessionId] = prevNew; else if(newExId!==exId) delete DATA.cells[newExId+'|'+sessionId];
@@ -3658,25 +3666,31 @@ function isRampedCompound(ex, workingWeight){
 }
 function roundToStep(v, step){ return Math.round(v/step)*step; }
 
+/** Warm-ups the way lifters actually do them: movement practice first (the empty
+ *  bar for barbell lifts), then fewer reps as the weight climbs, finishing with a
+ *  near-working single on heavier days — e.g. 60kg bench: 20×10, 40×5, 47.5×3,
+ *  55×1. Deadlifts skip the empty bar (it's too low off the floor). Machines and
+ *  dumbbells get a shorter ramp; isolation work gets none (see isRampedCompound). */
 function buildWarmups(workingWeight, ex){
   const n = (ex && ex.name || '').toLowerCase();
-  const barbell = /barbell|bench|squat|deadlift|good morning|row/.test(n) && !/dumbbell|\bdb\b|machine|cable/.test(n);
+  const barbell = /barbell|squat|bench press|deadlift|good morning|pendlay|bent-?over row/.test(n)
+    && !/dumbbell|\bdb\b|machine|cable|smith|single-leg|single-arm|split|goblet|hack|chest-supported|leg press/.test(n);
   const step = barbell ? 2.5 : 1;
-  const plan = workingWeight >= 60 ? [[0.45,5],[0.65,3],[0.85,2]]
-             : workingWeight >= 40 ? [[0.5,5],[0.75,3]]
-             : [[0.55,5]];
+  let plan;
+  if(barbell && /deadlift/.test(n)) plan = [[0.4,5],[0.6,3],[0.8,2]].concat(workingWeight>=80 ? [[0.92,1]] : []);
+  else if(barbell) plan = [[20/workingWeight,10],[0.65,5],[0.8,3]].concat(workingWeight>=60 ? [[0.92,1]] : []);
+  else plan = workingWeight >= 40 ? [[0.5,8],[0.75,3]] : [[0.6,6]];
   const out = [];
   let prev = 0;
   plan.forEach(([pct, reps])=>{
-    let wt = roundToStep(workingWeight*pct, step);
-    if(wt <= prev) return;            // skip duplicates once rounded
-    if(wt >= workingWeight) return;   // never warm up at or above the work weight
+    const wt = roundToStep(workingWeight*pct, step);
+    if(wt <= prev) return;                 // skip duplicates once rounded
+    if(wt >= workingWeight - step/2) return; // never warm up at or above the work weight
     prev = wt;
     out.push({ weight:{type:'kg', value:wt}, reps, perSide:false, isSeconds:false, rir:null });
   });
   return out;
 }
-
 /** Flags a logged ramp that's costing more than it's priming. */
 function rampWarning(analysis){
   if(!analysis || analysis.bodyweight || !analysis.warmups.length) return null;
@@ -3849,9 +3863,9 @@ function computeExerciseStats(exId, sortedSessions, machineId){
   const prev = points.length>1 ? points[points.length-2] : null;
   const last4 = points.slice(-4);
 
-  const kgPoints = points.filter(p=>p.unit==='kg');
+  const kgPoints = points.filter(p=>p.unit==='kg' && Number.isInteger(p.reps));
   let e1rm=null, e1rmSource=null, e1rmConfidence=null;
-  if(kgPoints.length){
+  if(kgPoints.length && usesE1RM(DATA.exercises.find(e=>e.id===exId))){
     let best=null;
     kgPoints.slice(-3).forEach(p=>{
       const est = estimate1RMWithRIR(p.value, p.reps, p.rir);
@@ -3865,7 +3879,7 @@ function computeExerciseStats(exId, sortedSessions, machineId){
     const sets = DATA.cells[exId+'|'+sortedSessions[i].id];
     if(sets && sets.length && machineOfSets(sets)===machineId){ lastSets = sets; break; }
   }
-  const lastTonnage = lastSets.reduce((sum,s)=> sum + (s.weight && s.weight.type==='kg' && !s.isSeconds ? s.weight.value*s.reps : 0), 0);
+  const lastTonnage = setsVolumeKg(lastSets);
 
   const changeVsPrevious = (prev && last.unit==='kg' && prev.unit==='kg') ? +(last.value-prev.value).toFixed(1) : null;
   let changeOver4Pct = null;
@@ -3909,7 +3923,8 @@ function emptyPRRecord(){
  */
 function applySessionToPRRecord(rec, exId, sessionId, dateStr, e1rmValue){
   const found = [];
-  const sets = sessionId ? cellSets(exId+'|'+sessionId) : [];
+  // a set with fractional reps is a typo ("21.6 reps"), not a record
+  const sets = (sessionId ? cellSets(exId+'|'+sessionId) : []).filter(isPlausibleSet);
   const weightedSets = sets.filter(s=>s.weight && s.weight.type==='kg' && !s.isSeconds);
 
   if(weightedSets.length){
@@ -3935,7 +3950,7 @@ function applySessionToPRRecord(rec, exId, sessionId, dateStr, e1rmValue){
     found.push({ kind:'e1rm', text: `${e1rmValue.toFixed(1)}kg estimated` });
   }
 
-  const sessionVolume = sets.reduce((sum,st)=> sum + (st.weight && st.weight.type==='kg' && !st.isSeconds ? st.weight.value*st.reps : 0), 0);
+  const sessionVolume = setsVolumeKg(sets);
   if(sessionVolume>0 && (!rec.volume || sessionVolume > rec.volume.value + 0.001)){
     rec.volume = { value: Math.round(sessionVolume), date: dateStr };
     found.push({ kind:'volume', text: `${Math.round(sessionVolume).toLocaleString()}kg session volume` });
@@ -3947,23 +3962,51 @@ function applySessionToPRRecord(rec, exId, sessionId, dateStr, e1rmValue){
   return found;
 }
 
+/** Whole reps (or a timed hold). Anything else came from a mistyped entry. */
+function isPlausibleSet(s){ return s && (s.isSeconds || Number.isInteger(s.reps)); }
+/** Flags a just-saved entry with fractional reps — nearly always a weight typed
+ *  where the reps go ("21.6kg 15, 13, 21.6"). One tap opens it to fix. */
+function warnIfOddReps(exId, sessionId){
+  const odd = cellSets(exId+'|'+sessionId).find(s=>!isPlausibleSet(s));
+  if(!odd) return false;
+  const ex = DATA.exercises.find(e=>e.id===exId);
+  showToast(`${odd.reps} reps on ${ex?ex.name:'that exercise'} — is that right? It's left out of PRs until fixed.`,
+    ()=>{ closeModal(); openEditEntryModal(sessionId, exId); }, 'Fix');
+  return true;
+}
+/** On load: point out any entry already in the log with fractional reps. */
+function flagOddRepsInLog(){
+  for(const key of Object.keys(DATA.cells)){
+    if(cellSets(key).some(s=>!isPlausibleSet(s))){
+      const i = key.indexOf('|');
+      if(DATA.sessions.some(x=>x.id===key.slice(i+1))) return warnIfOddReps(key.slice(0,i), key.slice(i+1));
+    }
+  }
+  return false;
+}
+/** An estimated 1RM means something for big multi-joint lifts; for a 15-rep face
+ *  pull or pushdown it's arithmetic, not strength, so it isn't tracked there. */
+function usesE1RM(ex){ return movementTierOf(ex)==='compound'; }
 /** Best estimated 1RM from a single session's sets (Epley, RIR-aware). */
 function sessionE1RM(exId, sessionId){
-  const sets = cellSets(exId+'|'+sessionId).filter(s=>s.weight && s.weight.type==='kg' && !s.isSeconds);
+  if(!usesE1RM(DATA.exercises.find(e=>e.id===exId))) return null;
+  const sets = cellSets(exId+'|'+sessionId).filter(s=>s.weight && s.weight.type==='kg' && !s.isSeconds && isPlausibleSet(s));
   if(!sets.length) return null;
   return Math.max(...sets.map(s=>estimate1RMWithRIR(s.weight.value, s.reps, s.rir)));
 }
 
 /**
- * Rebuilds every PR record by replaying the full logged history in date order.
- * Without this, an empty prRecords store treats whatever you log next as the
- * baseline — so a light 40kg bench would be announced as a weight PR despite
- * months of 55kg sessions sitting in the log.
+ * PR records are a cache derived from the log, never a source of truth: they're
+ * replayed from every logged set in date order. Updating them incrementally let
+ * them drift — a set corrected or deleted afterwards left its "record" behind (a
+ * 45kg pushdown PR with no 45kg set anywhere). So they're rebuilt on load and on
+ * every render, and nothing reads a record that the log doesn't back up.
  */
-function rebuildPRRecordsFromHistory(){
+function buildPRRecords(excludeSessionId){
   const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   const rebuilt = {};
   sortedSessions.forEach(sess=>{
+    if(sess.id===excludeSessionId) return;
     DATA.exercises.forEach(ex=>{
       const sets = cellSets(ex.id+'|'+sess.id);
       if(!sets.length) return;
@@ -3972,19 +4015,21 @@ function rebuildPRRecordsFromHistory(){
       applySessionToPRRecord(rec, ex.id, sess.id, sess.date, sessionE1RM(ex.id, sess.id));
     });
   });
-  DATA.prRecords = rebuilt;
+  return rebuilt;
 }
+function rebuildPRRecordsFromHistory(){ DATA.prRecords = buildPRRecords(); }
 
+/** Announces any records this entry sets against everything else in the log, then
+ *  refreshes the cache from scratch. */
 function checkForPR(exId, exName, sessionId){
-  if(!DATA.prRecords) DATA.prRecords = {};
   const machineId = machineOfCell(exId+'|'+sessionId);
   const key = prKey(exId, machineId);
-  const rec = DATA.prRecords[key] || emptyPRRecord();
+  const rec = buildPRRecords(sessionId)[key] || emptyPRRecord();
   const session = DATA.sessions.find(s=>s.id===sessionId);
   const dateStr = session ? session.date : todayLocal();
   const found = applySessionToPRRecord(rec, exId, sessionId, dateStr, sessionE1RM(exId, sessionId));
+  rebuildPRRecordsFromHistory();
   if(found.length){
-    DATA.prRecords[key] = rec;
     scheduleSave();
     const where = machineId ? ` (${machineName(machineId)})` : '';
     found.forEach(f=> showToast(`New ${PR_KIND_LABEL[f.kind]} — ${exName}${where}: ${f.text}`));
@@ -4778,6 +4823,7 @@ function openWorkoutMode(sessionId){
       if(!parseSetsFromText(raw).length){ showToast("Couldn't read that — try something like 50kg 8, 8, 8"); return; }
       setCellFromText(key, raw);
       prsThisWorkout += checkForPR(exId, exById(exId).name, sessionId);
+      warnIfOddReps(exId, sessionId);
     }
     scheduleSave(); updateStatRow();
     const row = input.closest('[data-workout-row]');
@@ -5018,7 +5064,7 @@ function showWorkoutSummary(session, pool, priorSessions, prsThisWorkout){
     const actual = cellSets(e.id+'|'+session.id);
     if(!actual.length) return null;
     totalSets += actual.length;
-    volumeKg += actual.reduce((s,st)=> s + (st.weight && st.weight.type==='kg' && !st.isSeconds ? st.weight.value*st.reps*(st.perSide?2:1) : 0), 0);
+    volumeKg += setsVolumeKg(actual);
     const planned = targetSets(session, e.id);
     const compareAgainst = planned.length ? planned : (()=>{
       const { suggestion } = deterministicSuggestionFor(e.id, priorSessions, machineOfSets(actual));
@@ -5141,11 +5187,11 @@ function confirmDialog(message, okLabel){
     wrap.querySelector('#cOk').addEventListener('click', ()=>done(true));
   });
 }
-function showToast(message, undoFn){
+function showToast(message, undoFn, actionLabel){
   document.querySelectorAll('.toast').forEach(t=>t.remove());
   const toast = document.createElement('div');
   toast.className = 'toast';
-  toast.innerHTML = `<span>${escapeHtml(message)}</span>${undoFn?'<button class="toast-undo">Undo</button>':''}`;
+  toast.innerHTML = `<span>${escapeHtml(message)}</span>${undoFn?`<button class="toast-undo">${escapeHtml(actionLabel||'Undo')}</button>`:''}`;
   document.body.appendChild(toast);
   const timer = setTimeout(()=>toast.remove(), 6000);
   if(undoFn){
@@ -5649,6 +5695,7 @@ Chest supported row:
       DATA.sessions.push({id, date:dateVal, label, cat, targets:{}});
       resolved.forEach(r=>{ DATA.cells[r.ex.id+'|'+id] = tagSets(r.sets, machineForNewSets(r.ex.id+'|'+id)); });
       resolved.forEach(r=>checkForPR(r.ex.id, r.ex.name, id));
+      resolved.forEach(r=>warnIfOddReps(r.ex.id, id));
       scheduleSave();
       close();
       if(isDup) showToast('Added as a second session on that date.');
@@ -5822,7 +5869,9 @@ function openDetailModal(exId, sortedSessions, viewGym){
     oneRMBox.innerHTML = `<b>${best1RM.toFixed(1)}kg</b><span>estimated one-rep max</span>
       <div class="calc-sub" style="margin-top:4px;">Based on ${src.value}kg × ${src.reps} (${CONFIDENCE_LABEL[stats.e1rmConfidence]}) · Epley formula</div>`;
   } else {
-    oneRMBox.innerHTML = `<span class="calc-none">No weighted sets logged yet for an estimate.</span>`;
+    oneRMBox.innerHTML = usesE1RM(ex)
+      ? `<span class="calc-none">No weighted sets logged yet for an estimate.</span>`
+      : (stats && stats.last ? `<b>${stats.last.value}${stats.last.unit==='kg'?'kg':''} × ${stats.last.reps}</b><span>top set last time</span>` : '');
   }
 
   const prBox = m.querySelector('#prBox');
@@ -5881,7 +5930,7 @@ function openDetailModal(exId, sortedSessions, viewGym){
       out.innerHTML = `${w.toFixed(1)}<span>kg</span>`;
     });
   } else {
-    calcBox.innerHTML = `<p class="calc-none">Not enough weighted-set data yet for a lift estimate on this exercise.</p>`;
+    calcBox.innerHTML = usesE1RM(ex) ? `<p class="calc-none">Not enough weighted-set data yet for a lift estimate on this exercise.</p>` : '';
   }
 
   const muscles = MUSCLE_MAP[ex.name] || guessMuscles(ex.name);
@@ -6158,6 +6207,7 @@ document.getElementById('importFileInput').addEventListener('change', async (e)=
   await loadData();
   migrateData();
   render();
+  setTimeout(flagOddRepsInLog, 900);
 })();
 </script>
 </body>
