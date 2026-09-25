@@ -257,6 +257,8 @@
   .modal-backdrop{ position:fixed; inset:0; background:rgba(10,9,6,0.72); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; }
   .modal{ background:var(--surface); border:1px solid var(--border); border-top:3px solid var(--accent); border-radius:2px; max-width:560px; width:100%; max-height:88vh; overflow:auto; padding:26px; box-shadow:0 24px 70px rgba(0,0,0,.5); }
   .modal.wide{ max-width:800px; }
+  /* scrolling to the end of a pop-up mustn't carry on scrolling the page behind it */
+  .modal, .modal-backdrop, .workout-overlay, .ex-picker-results, .table-scroll{ overscroll-behavior:contain; }
   .modal h2{ font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:30px; line-height:1; margin:0 0 6px; }
   .modal .modal-sub{ color:var(--text-faint); font-size:12.5px; margin:0 0 20px; }
   .modal-close{ float:right; background:none; border:none; color:var(--text-faint); font-size:20px; cursor:pointer; line-height:1; }
@@ -1399,9 +1401,13 @@ function render(){
     b.onclick = ()=>{ currentTab=b.dataset.tab; render(); };
   });
 
+  // rebuilding the tab briefly changes the page height, which can throw the scroll
+  // position around on phones — hold it where it was
+  const y = scrollLockY===null ? window.scrollY : null;
   if(currentTab==='log') renderLogTab(sortedSessions);
   else if(currentTab==='calendar') renderCalendarTab(sortedSessions);
   else renderAutoPlanTab(sortedSessions);
+  if(y!==null && window.scrollY!==y) window.scrollTo(0, y);
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -1716,7 +1722,7 @@ function promptMachineName(title, initial){
     wrap.querySelector('#cCancel').addEventListener('click', ()=>done(null));
     wrap.querySelector('#cOk').addEventListener('click', ok);
     input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); ok(); } else if(e.key==='Escape'){ e.stopPropagation(); done(null); } });
-    setTimeout(()=>{ input.focus(); input.select(); }, 20);
+    setTimeout(()=>autoFocus(input, true), 20);
   });
 }
 /** Every entry logged on a machine, as a count. */
@@ -4574,7 +4580,7 @@ function wireExercisePicker(root, candidates, onPick){
   };
   draw('');
   searchInput.addEventListener('input', ()=>draw(searchInput.value));
-  setTimeout(()=>searchInput.focus(), 20);
+  setTimeout(()=>autoFocus(searchInput), 20);
 }
 
 function openWorkoutMode(sessionId){
@@ -4657,8 +4663,7 @@ function openWorkoutMode(sessionId){
   const firstIncomplete = overlay.querySelector('.workout-ex:not(.done)');
   if(firstIncomplete){
     firstIncomplete.scrollIntoView({block:'center'});
-    const inp = firstIncomplete.querySelector('input');
-    if(inp) inp.focus();
+    autoFocus(firstIncomplete.querySelector('input'));
   }
   // an empty target is what pins the exercise to this session
   const pinExerciseToSession = (exId)=>{
@@ -4875,10 +4880,41 @@ function openModal(html){
   if(modalEl){ modalEl.setAttribute('role','dialog'); modalEl.setAttribute('aria-modal','true'); }
   const escHandler = (e)=>{ if(e.key==='Escape'){ closeModal(); document.removeEventListener('keydown', escHandler); } };
   document.addEventListener('keydown', escHandler);
-  setTimeout(()=>{ const f = wrap.querySelector('input, select, button:not(.modal-close)'); if(f) f.focus(); }, 20);
+  setTimeout(()=>autoFocus(wrap.querySelector('input, select, button:not(.modal-close)')), 20);
   return wrap;
 }
 function closeModal(){ document.querySelectorAll('.modal-backdrop').forEach(m=>m.remove()); }
+
+/* ---------- mobile scroll stability ----------
+   On phones, three things made the page jump: focusing a field when a pop-up
+   opens (the keyboard or date picker pops up and the browser scrolls to "reveal"
+   it), scrolls inside a pop-up carrying on into the page behind, and pop-ups that
+   redraw themselves snapping back to the top. */
+const IS_TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+/** Focus for keyboard users on desktop; on touch screens leave it to the tap. */
+function autoFocus(el, select){
+  if(!el || IS_TOUCH) return;
+  el.focus({preventScroll:true});
+  if(select && el.select) el.select();
+}
+/** Pins the page in place while any pop-up or the workout screen is open, and puts
+ *  it back exactly where it was afterwards. Watches the DOM so every pop-up —
+ *  however it was opened — is covered. */
+let scrollLockY = null;
+function syncScrollLock(){
+  const open = !!document.querySelector('body > .modal-backdrop, body > .workout-overlay');
+  const body = document.body;
+  if(open && scrollLockY===null){
+    scrollLockY = window.scrollY;
+    body.style.position = 'fixed'; body.style.top = (-scrollLockY)+'px';
+    body.style.left = '0'; body.style.right = '0';
+  } else if(!open && scrollLockY!==null){
+    const y = scrollLockY; scrollLockY = null;
+    body.style.position = ''; body.style.top = ''; body.style.left = ''; body.style.right = '';
+    window.scrollTo(0, y);
+  }
+}
+new MutationObserver(syncScrollLock).observe(document.body, {childList:true});
 
 /** Like confirmDialog, but with several labelled outcomes. Resolves to the chosen
  *  option's key, or null if cancelled. */
@@ -4962,7 +4998,13 @@ function openPlanSessionModal(defaultCat, defaultDate){
     });
   }
 
+  // redraws keep the pop-up scrolled where it was, instead of snapping to the top
   function draw(){
+    const prev = wrap.querySelector('.modal'); const top = prev ? prev.scrollTop : 0;
+    drawContent();
+    const next = wrap.querySelector('.modal'); if(next) next.scrollTop = top;
+  }
+  function drawContent(){
     const catOptions = CAT_ORDER.map(c=>`<option value="${c}" ${c===state.cat?'selected':''}>${CATS[c].label}</option>`).join('');
     let suggBlock = '';
     if(state.suggestions){
@@ -5127,7 +5169,8 @@ function openPlanSessionModal(defaultCat, defaultDate){
       currentTab = 'log'; activeCat = cat; render();
     });
 
-    setTimeout(()=>{ const f = wrap.querySelector('#fDate'); if(f) f.focus(); }, 20);
+    // only on first open: re-focusing on every redraw reopened the date picker on phones
+    if(!state.focused){ state.focused = true; setTimeout(()=>autoFocus(wrap.querySelector('#fDate')), 20); }
   }
 
   async function runAiRefine(){
@@ -5302,7 +5345,13 @@ function openLogSessionModal(defaultDate, defaultCat){
   function escCloseOnce(e){ if(e.key==='Escape'){ wrap.remove(); document.removeEventListener('keydown', escCloseOnce); } }
   const close = ()=>{ wrap.remove(); document.removeEventListener('keydown', escCloseOnce); };
 
+  // redraws keep the pop-up scrolled where it was, instead of snapping to the top
   function draw(){
+    const prev = wrap.querySelector('.modal'); const top = prev ? prev.scrollTop : 0;
+    drawContent();
+    const next = wrap.querySelector('.modal'); if(next) next.scrollTop = top;
+  }
+  function drawContent(){
     if(!state.preview){
       wrap.innerHTML = `
         <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="logSessTitle">
@@ -5341,7 +5390,7 @@ Chest supported row:
         state.preview = result;
         draw();
       });
-      setTimeout(()=>{ const f = wrap.querySelector('#fPaste'); if(f) f.focus(); }, 20);
+      setTimeout(()=>autoFocus(wrap.querySelector('#fPaste')), 20);
       return;
     }
 
@@ -5839,7 +5888,7 @@ document.getElementById('pasteLink').addEventListener('click', ()=>{
     render();
     showToast('Imported '+sessCount+' sessions.');
   });
-  setTimeout(()=>{ const b=m.querySelector('#pasteBox'); if(b) b.focus(); }, 20);
+  setTimeout(()=>autoFocus(m.querySelector('#pasteBox')), 20);
 });
 
 document.getElementById('exportLink').addEventListener('click', ()=>{
