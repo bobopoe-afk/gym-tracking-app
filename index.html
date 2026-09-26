@@ -3614,6 +3614,8 @@ function openAddRunModal(defaultDate, onSaved){
 /* ============================= DETERMINISTIC SUGGESTIONS (no AI needed) ============================= */
 function incrementFor(w, exName){
   const n = (exName||'').toLowerCase();
+  // dumbbells come in fixed steps — never prescribe an 8.5kg dumbbell
+  if(/dumbbell|\bdb\b/.test(n)) return w < 10 ? 1 : 2;
   const base = w<10 ? 0.5 : w<30 ? 1 : w<60 ? 2.5 : 5;
   if(/lateral raise|face pull|curl|tricep|calf raise|rear delt|external rotation|shrug|wrist curl/.test(n)) return Math.max(0.5, base/2);
   if(/dumbbell|^db |seated db| db /.test(n) && /squat|press|row|deadlift|lunge|split squat/.test(n)) return Math.max(base, 2);
@@ -3631,6 +3633,7 @@ function inferRepRange(name){
   if(/deadlift|back squat|front squat|barbell bench|overhead press|power clean|snatch|clean and jerk|trap bar/.test(n)) return { low:3, high:6 };
   if(/squat|bench|press|row|pulldown|pull-?up|chin-?up|dip|hip thrust|leg press|split squat|lunge|step-?up/.test(n)) return { low:6, high:10 };
   if(/plank|hold|carry/.test(n)) return { low:20, high:60 };
+  if(/rollout|ab-?wheel|hanging (knee|leg) raise|dead ?bug|bird ?dog/.test(n)) return { low:8, high:15 };
   if(/calf|crunch|raise|curl|fly|pec deck|face pull|shrug|extension|pushdown|pressdown|abduct|adduct|rotation|neck|wrist/.test(n)) return { low:10, high:15 };
   return { low:DEFAULT_REP_RANGE.low, high:DEFAULT_REP_RANGE.high };
 }
@@ -3820,23 +3823,41 @@ function analyseWorkSets(sets){
  *    the range;
  *  - within the range → one more rep on the weakest top set (7,7,5 → 7,7,6; the
  *    good sets aren't dragged down to match the weak one);
- *  - below the range → repeat it as logged and consolidate.
+ *  - below the range → same load, one more rep on the set that fell short.
+ * Bodyweight work follows the same one-set-at-a-time rule, capped at the top of
+ * the range (past that, the answer is load or a harder variation, not more reps).
  */
 function decideProgression(ex, analysis){
   const { low, high } = repRangeFor(ex);
   const exName = ex ? ex.name : '';
   const clean = (s)=>{ const c = Object.assign({}, s, { weight: s.weight ? Object.assign({}, s.weight) : s.weight, rir:null }); delete c.machine; return c; };
 
+  // the set to push next: the weakest (the last one, if tied)
+  const weakestOf = (sets, idx)=>idx.reduce((w,i)=> sets[i].reps <= sets[w].reps ? i : w, idx[0]);
+
   if(analysis.bodyweight){
+    // No load to add, so progress one set at a time like loaded work — not +1 on
+    // every set every session, which ran straight past the top of the range.
     const timed = analysis.workSets.some(s=>s.isSeconds);
     const step = timed ? 5 : 1;
+    const unit = timed ? 's' : ' reps';
+    const sets = analysis.workSets.map(clean);
+    const idx = sets.map((s,i)=>i);
+    const min = Math.min(...sets.map(s=>s.reps));
+    if(min >= high){
+      return {
+        action:'hold', sets,
+        why: `every set is at ${high}${unit}, the top of the range`,
+        hint: `${low}–${high}${timed?'s hold':' rep range'} · all sets at the top — time to add weight or a harder variation`,
+      };
+    }
+    // holds creep up together (+5s each); reps go one set at a time
+    if(timed) sets.forEach(s=>{ s.reps = Math.min(high, s.reps + step); });
+    else { const w = weakestOf(sets, idx); sets[w].reps = Math.min(high, sets[w].reps + step); }
     return {
-      action:'reps',
-      sets: analysis.workSets.map(s=>Object.assign(clean(s), { reps: s.reps + step })),
-      why: timed
-        ? `+${step}s per hold — no load to add, so time keeps climbing`
-        : `+${step} rep — no load to add, so reps keep climbing`,
-      hint: timed ? `${low}–${high}s hold` : `${low}–${high} rep range`,
+      action:'reps', sets,
+      why: timed ? `+${step}s per hold` : `+1 rep on your weakest set`,
+      hint: `${low}–${high}${timed?'s hold':' rep range'} · every set to ${high}${unit} earns a harder version`,
     };
   }
 
@@ -3846,10 +3867,13 @@ function decideProgression(ex, analysis){
   const easy = analysis.rir!=null && analysis.rir>=3;
 
   if(minReps < low){
+    // same load, one more rep on the set that fell short (9,7,5 → 9,7,6)
+    const w = weakestOf(structure, topIdx);
+    structure[w].reps += 1;
     return {
       action:'hold',
       sets: structure,
-      why: `held at ${workingWeight}kg — ${minReps} rep${minReps===1?'':'s'} is below the ${low}–${high} range`,
+      why: `held at ${workingWeight}kg — ${minReps} rep${minReps===1?'':'s'} is below the ${low}–${high} range, so +1 on that set`,
       hint: `${low}–${high} rep range · get every top set to ${low}+ before adding load`,
     };
   }
@@ -3874,9 +3898,7 @@ function decideProgression(ex, analysis){
   }
 
   // in range: one more rep on the weakest top set (the last one, if tied)
-  let weakest = topIdx[0];
-  topIdx.forEach(i=>{ if(structure[i].reps <= structure[weakest].reps) weakest = i; });
-  structure[weakest].reps += 1;
+  structure[weakestOf(structure, topIdx)].reps += 1;
   const lowest = Math.min(...topIdx.map(i=>structure[i].reps));
   return {
     action:'reps',
