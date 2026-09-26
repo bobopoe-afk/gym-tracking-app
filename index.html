@@ -331,6 +331,9 @@
   .set-val{ flex:1; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; white-space:nowrap; }
   .set-val small{ font-weight:400; color:var(--text-faint); font-size:10px; margin-left:2px; }
   .set-val.unset{ color:var(--accent); }
+  button.set-val{ background:none; border:none; padding:0; min-width:0; cursor:text; color:var(--text); touch-action:manipulation; }
+  button.set-val.unset{ color:var(--accent); }
+  .set-val-input{ flex:1; min-width:0; width:100%; height:40px; text-align:center; background:var(--surface); border:1px solid var(--accent); border-radius:6px; color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:600; }
   .set-del{ flex:none; width:30px; height:44px; background:none; border:none; color:var(--text-faint); font-size:18px; cursor:pointer; touch-action:manipulation; }
   .workout-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
   .workout-actions .btn{ padding:11px 14px; }
@@ -4482,10 +4485,12 @@ function rebuildPRRecordsFromHistory(){ DATA.prRecords = buildPRRecords(); }
 function checkForPR(exId, exName, sessionId){
   const machineId = machineOfCell(exId+'|'+sessionId);
   const key = prKey(exId, machineId);
-  const rec = buildPRRecords(sessionId)[key] || emptyPRRecord();
+  const prior = buildPRRecords(sessionId)[key];
+  const rec = prior || emptyPRRecord();
   const session = DATA.sessions.find(s=>s.id===sessionId);
   const dateStr = session ? session.date : todayLocal();
-  const found = applySessionToPRRecord(rec, exId, sessionId, dateStr, sessionE1RM(exId, sessionId));
+  // the first time you ever log an exercise sets a baseline, not a record
+  const found = prior ? applySessionToPRRecord(rec, exId, sessionId, dateStr, sessionE1RM(exId, sessionId)) : [];
   rebuildPRRecordsFromHistory();
   if(found.length){
     scheduleSave();
@@ -5147,8 +5152,8 @@ function openWorkoutMode(sessionId){
     if(!recentSets.length){
       const elsewhere = machinesUsedFor(ex.id).some(m=>m!==machineId);
       return { recentSets, warning:null, hint: elsewhere
-        ? `${low}–${high} rep range — first time at this gym (machines differ), so set today's weight`
-        : `${low}–${high} rep range — no history yet, so set a starting weight` };
+        ? `${low}–${high} rep range — first time at this gym (machines differ): tap the weight to type it`
+        : `${low}–${high} rep range — no history yet: tap the weight to type your starting weight` };
     }
     const d = deterministicSuggestionFor(ex.id, priorSessions, machineId);
     return { recentSets, hint: d.hint, warning: d.warning };
@@ -5179,9 +5184,9 @@ function openWorkoutMode(sessionId){
   const setRowHTML = (ex, s, i, n, src)=>{
     const loaded = s.weight && s.weight.type==='kg';
     const w = loaded
-      ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<span class="set-val ${s.weight.value?'':'unset'}">${s.weight.value}<small>kg</small></span>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
+      ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<button type="button" class="set-val ${s.weight.value?'':'unset'}" data-edit-val="w" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the weight">${s.weight.value}<small>kg</small></button>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
       : `<div class="stepper static"><span class="set-val">${formatWeight(s.weight)}</span></div>`;
-    const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<span class="set-val">${s.reps}<small>${s.isSeconds?'sec':'reps'}${s.perSide?' ea':''}</small></span>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
+    const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<button type="button" class="set-val" data-edit-val="r" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the ${s.isSeconds?'seconds':'reps'}">${s.reps}<small>${s.isSeconds?'sec':'reps'}${s.perSide?' ea':''}</small></button>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
     const tick = src==='log'
       ? `<button type="button" class="set-tick on" data-untick="${ex.id}" data-i="${i}" aria-label="Set ${n} done — tap to undo">✓</button>`
       : `<button type="button" class="set-tick" data-tick="${ex.id}" data-i="${i}" aria-label="Mark set ${n} done">${n}</button>`;
@@ -5363,6 +5368,39 @@ function openWorkoutMode(sessionId){
       if(d.src==='log') savedEdit(d.ex, dir<0);
       saveDrafts();
       refreshRow(d.ex);
+      return;
+    }
+    if(d.editVal){
+      // tap the number itself to type it — far quicker than + for a first weight
+      const sets = arrFor(d.src, d.ex);
+      const i = +d.i, st = sets[i];
+      if(!st) return;
+      const isW = d.editVal==='w';
+      const input = document.createElement('input');
+      input.type = 'number'; input.inputMode = isW ? 'decimal' : 'numeric'; input.step = isW ? '0.5' : '1'; input.min = '0';
+      input.className = 'set-val-input';
+      input.value = isW ? st.weight.value : st.reps;
+      b.replaceWith(input);
+      input.focus(); input.select();
+      let done = false;
+      const commit = ()=>{
+        if(done) return; done = true;
+        const v = parseFloat(input.value);
+        if(!isNaN(v) && v>=0){
+          if(isW){
+            const old = st.weight.value, nv = Math.round(v*100)/100;
+            st.weight = {type:'kg', value:nv};
+            // later sets at the old weight follow, same as the − / + buttons
+            for(let j=i+1; j<sets.length && sets[j].weight && sets[j].weight.type==='kg' && sets[j].weight.value===old; j++) sets[j].weight = {type:'kg', value:nv};
+            if(d.src==='log'){ const todo = draftFor(exById(d.ex)); for(let j=0; j<todo.length && todo[j].weight && todo[j].weight.type==='kg' && todo[j].weight.value===old; j++) todo[j].weight = {type:'kg', value:nv}; }
+          } else if(v>0){ st.reps = Math.round(v); }
+          if(d.src==='log') savedEdit(d.ex, true);
+          saveDrafts();
+        }
+        refreshRow(d.ex);
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); input.blur(); } else if(ev.key==='Escape'){ done = true; refreshRow(d.ex); } });
       return;
     }
     if(d.tick){
