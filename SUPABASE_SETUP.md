@@ -10,7 +10,9 @@ Until it's configured, the app works as before: one log, saved in the browser.
 1. Go to https://supabase.com and sign up (signing in with GitHub is fine).
 2. **New project** → any name (e.g. `training-log`), set a database password
    (keep it somewhere safe; the app doesn't need it), region close to you
-   (e.g. London). Wait a minute or two for it to finish setting up.
+   (e.g. London). Under **Security**, keep **Enable Data API** ticked; the
+   other two boxes can be left as they are. Wait a minute or two for it to
+   finish setting up.
 
 ## 2. Create the table
 
@@ -30,6 +32,10 @@ alter table public.training_logs enable row level security;
 create policy "read own log"   on public.training_logs for select using (auth.uid() = user_id);
 create policy "create own log" on public.training_logs for insert with check (auth.uid() = user_id);
 create policy "update own log" on public.training_logs for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- signed-in users may use the table (the policies above still limit them to their own row);
+-- needed if "Automatically expose new tables" was unticked when creating the project
+grant select, insert, update on public.training_logs to authenticated;
 ```
 
 ## 3. Point sign-in emails at the website
