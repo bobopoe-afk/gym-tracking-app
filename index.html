@@ -367,6 +367,15 @@
   footer{ text-align:center; color:var(--text-faint); font-size:12px; padding:36px 0 0; }
   footer a{ color:var(--text-faint); cursor:pointer; text-decoration:underline; }
   .loading{ padding:80px 0; text-align:center; color:var(--text-faint); font-size:14px; }
+  /* sign-in screen */
+  body.auth-mode header, body.auth-mode footer{ display:none; }
+  .auth-card{ max-width:380px; margin:12vh auto 0; }
+  .auth-title{ font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:26px; margin:22px 0 14px; }
+  .auth-msg{ background:var(--accent-dim); border-left:2px solid var(--accent); padding:10px 12px; font-size:13px; margin:0 0 16px; }
+  .auth-go{ width:100%; padding:14px; font-size:13px; }
+  .auth-links{ display:flex; flex-direction:column; gap:12px; margin-top:20px; font-size:13px; }
+  .auth-links a{ color:var(--accent); cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+  .auth-links a.faint{ color:var(--text-faint); }
 
   /* ---------- responsive / touch ---------- */
   @media (max-width: 768px){
@@ -389,6 +398,7 @@
     .today-input, .field input, .field select, .sugg-row input{ font-size:16px; }
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body data-theme="iron">
 <div class="wrap">
@@ -1233,6 +1243,7 @@ function migrateData(){
 let DB = null;
 let STORAGE_MODE = 'local';
 const LOCAL_KEY = 'trainingData';
+let localKey = LOCAL_KEY; // per-account once signed in, so two accounts on one device never mix
 /** Captures exactly what happened during storage init, in plain language, so it
  *  can be read directly off the screen (via the "Storage debug" footer link)
  *  without needing browser dev tools. */
@@ -1303,10 +1314,10 @@ async function initStorage(){
 }
 
 function readLocal(){
-  try{ return localStorage.getItem(LOCAL_KEY); }catch(e){ return null; }
+  try{ return localStorage.getItem(localKey); }catch(e){ return null; }
 }
 function writeLocal(str){
-  try{ localStorage.setItem(LOCAL_KEY, str); return true; }catch(e){ return false; }
+  try{ localStorage.setItem(localKey, str); return true; }catch(e){ return false; }
 }
 
 // This artifact is private ("Only you"), so a plain shared document is already
@@ -1375,6 +1386,12 @@ async function persist(){
   clearTimeout(saveTimer); saveTimer = null;
   const json = JSON.stringify(DATA);
   const localOk = writeLocal(json); // always keep a local copy as a backstop
+  if(cloudUser){
+    cloudSync.dirty = true; saveSyncMeta();
+    localOk ? flashSaved() : flashSaveFailed();
+    scheduleCloudPush();
+    return;
+  }
   if(STORAGE_MODE!=='db' || !DB){ localOk ? flashSaved() : flashSaveFailed(); return; }
   // one write at a time per document
   if(persistInFlight){ await persistInFlight.catch(()=>{}); }
@@ -1403,13 +1420,330 @@ function flashSaveFailed(){
 }
 function updateStorageNote(){
   const el = document.getElementById('storageNote');
-  if(el) el.textContent = STORAGE_MODE==='db'
-    ? 'Saved to your account automatically.'
-    : 'Saved in this browser only — Export data now and then as a backup.';
+  if(!el) return;
+  const reset = document.getElementById('resetLink');
+  if(reset) reset.textContent = cloudUser ? 'Clear my log' : 'Reset to sample data';
+  if(cloudUser){
+    const st = { synced:'✓ Synced to your account', offline:'Offline — saved on this device, will sync when you’re back online', error:'Couldn’t reach your account — saved on this device, will keep trying' }[cloudSync.status] || 'Syncing…';
+    el.innerHTML = `${escapeHtml(st)} · ${escapeHtml(cloudUser.email||'')} · <a id="signOutLink">Sign out</a> ·`;
+    el.querySelector('#signOutLink').addEventListener('click', signOut);
+  } else if(cloudWanted() && localOnlyChosen()){
+    el.innerHTML = `Saved on this device only · <a id="signInLink">Sign in to sync</a> ·`;
+    el.querySelector('#signInLink').addEventListener('click', ()=>{ try{ localStorage.removeItem('cloudOptOut'); }catch(e){} location.reload(); });
+  } else {
+    el.textContent = STORAGE_MODE==='db'
+      ? 'Saved to your account automatically.'
+      : 'Saved in this browser only — Export data now and then as a backup.';
+  }
 }
 // don't let the save debounce lose the last few taps when the page is closed or backgrounded
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden' && saveTimer) persist(); });
 window.addEventListener('pagehide', ()=>{ if(saveTimer) persist(); });
+
+/* ============================= ACCOUNTS & SYNC ============================= *
+ * With CLOUD filled in, everyone signs in with email + password and their log lives
+ * in their own row of a Supabase table (row-level security means an account can
+ * only ever read or write its own row), so any device you sign in on has the same
+ * log. The anon key is meant to be public — access is decided by the database
+ * policies in SUPABASE_SETUP.md, not by keeping the key secret.
+ * Each device keeps a cached copy (per account), so the app still opens and logs
+ * offline; changes push up when the connection's back.
+ * Left empty, the app works exactly as before: one log, in this browser only. */
+const CLOUD = {
+  url: '',     // Supabase → Project Settings → API → Project URL
+  anonKey: '', // Supabase → Project Settings → API → anon public key
+};
+const CLOUD_TABLE = 'training_logs';
+let sb = null;          // Supabase client
+let cloudRecovering = false; // arrived from a password-reset email: set a new password first
+let cloudEnter = null;
+let cloudUser = null;   // signed-in user
+const cloudSync = { rev:0, dirty:false, timer:null, busy:null, status:'', lastOk:null };
+
+function cloudWanted(){ return !!(CLOUD.url && CLOUD.anonKey); }
+function cloudAvailable(){ return cloudWanted() && !!(window.supabase && window.supabase.createClient); }
+function localOnlyChosen(){ try{ return localStorage.getItem('cloudOptOut')==='1'; }catch(e){ return false; } }
+
+/** A fresh account starts with the exercise library but no history of its own —
+ *  the sample data is someone else's training. */
+function emptyData(){
+  const d = seedData();
+  d.sessions = []; d.cells = {}; d.prRecords = {}; d.runSchedule = []; d.templates = [];
+  return d;
+}
+
+function syncMetaKey(){ return 'syncMeta:'+(cloudUser?cloudUser.id:''); }
+function saveSyncMeta(){ try{ localStorage.setItem(syncMetaKey(), JSON.stringify({rev:cloudSync.rev, dirty:cloudSync.dirty})); }catch(e){} }
+function loadSyncMeta(){ try{ return JSON.parse(localStorage.getItem(syncMetaKey())||'null') || {rev:0, dirty:false}; }catch(e){ return {rev:0, dirty:false}; } }
+
+function setSyncStatus(text){
+  cloudSync.status = text;
+  updateStorageNote();
+}
+
+/* ---------- merging two copies of the log ----------
+   Both work in place, so anything holding a reference into DATA (an open workout,
+   a pop-up) keeps pointing at live objects. */
+const MERGE_LISTS = { sessions:'id', exercises:'id', templates:'id', machines:'id', trash:'id' };
+/** Make `target` match `src` exactly (the other device's copy is the newer truth). */
+function replaceDataInPlace(target, src){
+  Object.keys(MERGE_LISTS).forEach(k=>{
+    const idKey = MERGE_LISTS[k];
+    const old = new Map((target[k]||[]).map(x=>[x[idKey], x]));
+    target[k] = (src[k]||[]).map(x=>{
+      const t = old.get(x[idKey]);
+      if(!t) return x;
+      Object.keys(t).forEach(p=>delete t[p]);
+      return Object.assign(t, x);
+    });
+  });
+  Object.keys(target).forEach(k=>{ if(!(k in MERGE_LISTS) && !(k in src)) delete target[k]; });
+  Object.keys(src).forEach(k=>{ if(!(k in MERGE_LISTS)) target[k] = src[k]; });
+}
+/** Fold `src` into `target` without losing anything from either; where both have
+ *  the same session / set entry, `target` (this device's unsynced edits) wins. */
+function mergeDataInto(target, src){
+  Object.keys(MERGE_LISTS).forEach(k=>{
+    const idKey = MERGE_LISTS[k];
+    target[k] = target[k] || [];
+    const have = new Set(target[k].map(x=>x[idKey]));
+    (src[k]||[]).forEach(x=>{ if(!have.has(x[idKey])) target[k].push(x); });
+  });
+  target.cells = target.cells || {};
+  Object.entries(src.cells||{}).forEach(([key, sets])=>{ if(!target.cells[key]) target.cells[key] = sets; });
+  const runKey = r=>r.date+'|'+r.type;
+  const runs = new Set((target.runSchedule||[]).map(runKey));
+  target.runSchedule = (target.runSchedule||[]).concat((src.runSchedule||[]).filter(r=>!runs.has(runKey(r))));
+  Object.keys(src).forEach(k=>{ if(!(k in target)) target[k] = src[k]; });
+}
+
+/* ---------- talking to the database ---------- */
+async function fetchRemoteRev(){
+  const { data, error } = await sb.from(CLOUD_TABLE).select('rev').eq('user_id', cloudUser.id).maybeSingle();
+  if(error) throw error;
+  return data ? data.rev : null;
+}
+async function fetchRemoteLog(){
+  const { data, error } = await sb.from(CLOUD_TABLE).select('data, rev').eq('user_id', cloudUser.id).maybeSingle();
+  if(error) throw error;
+  return data; // {data, rev} or null
+}
+/** Sends this device's changes up. The update only lands if nobody else has
+ *  written since we last looked (rev check); if they have, their copy is merged
+ *  in first and we try again — so two devices can't silently overwrite each other. */
+function pushCloud(){
+  if(!cloudUser || !sb) return Promise.resolve();
+  if(cloudSync.busy) return cloudSync.busy.then(()=>cloudSync.dirty ? pushCloud() : null);
+  cloudSync.busy = (async ()=>{
+    for(let attempt=0; attempt<3; attempt++){
+      const remoteRev = await fetchRemoteRev();
+      if(remoteRev!=null && remoteRev > cloudSync.rev){
+        const remote = await fetchRemoteLog();
+        if(remote){ mergeDataInto(DATA, remote.data); migrateData(); cloudSync.rev = remote.rev; render(); }
+      }
+      const next = (remoteRev||0) + 1;
+      const row = { user_id: cloudUser.id, data: DATA, rev: next, updated_at: new Date().toISOString() };
+      let ok;
+      if(remoteRev==null){
+        const { error } = await sb.from(CLOUD_TABLE).insert(row);
+        if(error && error.code!=='23505') throw error; // 23505: another device just created it
+        ok = !error;
+      } else {
+        const { data, error } = await sb.from(CLOUD_TABLE).update(row).eq('user_id', cloudUser.id).eq('rev', remoteRev).select('rev');
+        if(error) throw error;
+        ok = data && data.length>0;
+      }
+      if(ok){
+        cloudSync.rev = next; cloudSync.dirty = false; cloudSync.lastOk = new Date();
+        saveSyncMeta(); writeLocal(JSON.stringify(DATA));
+        setSyncStatus('synced');
+        return;
+      }
+    }
+    throw new Error('kept colliding with another device');
+  })().catch(e=>{
+    console.warn('sync push failed', e);
+    setSyncStatus(navigator.onLine===false ? 'offline' : 'error');
+  }).finally(()=>{ cloudSync.busy = null; });
+  return cloudSync.busy;
+}
+function scheduleCloudPush(){
+  clearTimeout(cloudSync.timer);
+  cloudSync.timer = setTimeout(pushCloud, 1500);
+}
+/** Picks up changes made on another device. */
+async function pullCloud(){
+  if(!cloudUser || !sb || cloudSync.busy) return;
+  try{
+    const remoteRev = await fetchRemoteRev();
+    if(remoteRev==null || remoteRev <= cloudSync.rev){
+      if(cloudSync.dirty) pushCloud(); else setSyncStatus('synced');
+      return;
+    }
+    const remote = await fetchRemoteLog();
+    if(!remote) return;
+    if(cloudSync.dirty){ mergeDataInto(DATA, remote.data); cloudSync.rev = remote.rev; migrateData(); pushCloud(); }
+    else { replaceDataInPlace(DATA, remote.data); cloudSync.rev = remote.rev; migrateData(); writeLocal(JSON.stringify(DATA)); saveSyncMeta(); setSyncStatus('synced'); }
+    render();
+  }catch(e){
+    setSyncStatus(navigator.onLine===false ? 'offline' : 'error');
+  }
+}
+function startSyncLoop(){
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') pullCloud(); });
+  window.addEventListener('online', ()=>{ cloudSync.dirty ? pushCloud() : pullCloud(); });
+  setInterval(()=>{ if(document.visibilityState==='visible') pullCloud(); }, 60000);
+}
+
+/** After sign-in: this account's log from the cloud, reconciled with anything this
+ *  device logged while offline. */
+async function loadCloudData(){
+  localKey = 'trainingData:'+cloudUser.id;
+  try{ localStorage.setItem('lastCloudUser', JSON.stringify({id:cloudUser.id, email:cloudUser.email})); }catch(e){}
+  const meta = loadSyncMeta();
+  cloudSync.rev = meta.rev; cloudSync.dirty = meta.dirty;
+  let cached = null;
+  try{ cached = JSON.parse(readLocal()||'null'); }catch(e){}
+  let remote;
+  try{ remote = await fetchRemoteLog(); }
+  catch(e){
+    // offline: work from this device's copy and sync later
+    DATA = cached || emptyData();
+    setSyncStatus('offline');
+    return;
+  }
+  if(remote){
+    DATA = remote.data;
+    if(cached && cloudSync.dirty) mergeDataInto(DATA, cached);
+    cloudSync.rev = remote.rev;
+    if(cloudSync.dirty) scheduleCloudPush(); else setSyncStatus('synced');
+  } else {
+    // first sign-in for this account: offer the log already on this device, if any
+    let legacy = null;
+    try{ legacy = JSON.parse(localStorage.getItem(LOCAL_KEY)||'null'); }catch(e){}
+    const n = legacy && Array.isArray(legacy.sessions) ? legacy.sessions.length : 0;
+    let useLegacy = false;
+    if(n){
+      const pick = await chooseDialog('Welcome!', `This device already has a training log with ${n} session${n===1?'':'s'}. Use it for your account?`, [
+        { key:'use', label:'Yes, use this log', hint:'It’ll be on every device you sign in on', primary:true },
+        { key:'fresh', label:'No, start an empty log' },
+      ]);
+      useLegacy = pick==='use';
+    }
+    DATA = useLegacy ? legacy : emptyData();
+    cloudSync.rev = 0; cloudSync.dirty = true;
+    await pushCloud();
+  }
+  writeLocal(JSON.stringify(DATA));
+  saveSyncMeta();
+}
+
+/* ---------- sign-in screen ---------- */
+function showAuthScreen(mode, message){
+  document.body.classList.add('auth-mode');
+  const app = document.getElementById('app');
+  const titles = { signin:'Sign in', signup:'Create your account', reset:'Reset your password', newpass:'Choose a new password' };
+  app.innerHTML = `
+    <div class="auth-card">
+      <p class="eyebrow">Training ledger</p>
+      <h1 style="margin:0 0 6px;">Under the <span class="h1-accent">bar.</span></h1>
+      <h2 class="auth-title">${titles[mode]}</h2>
+      ${message ? `<p class="auth-msg">${escapeHtml(message)}</p>` : ''}
+      <form id="authForm" autocomplete="on">
+        ${mode!=='newpass' ? `<div class="field"><label for="authEmail">Email</label><input type="email" id="authEmail" autocomplete="email" required></div>` : ''}
+        ${mode!=='reset' ? `<div class="field"><label for="authPass">${mode==='newpass'?'New password':'Password'}</label><input type="password" id="authPass" minlength="6" autocomplete="${mode==='signin'?'current-password':'new-password'}" required></div>` : ''}
+        <p class="plan-error" id="authErr" style="display:none;"></p>
+        <button class="btn primary auth-go" type="submit">${{signin:'Sign in', signup:'Create account', reset:'Email me a reset link', newpass:'Save password'}[mode]}</button>
+      </form>
+      <div class="auth-links">
+        ${mode==='signin' ? `<a data-auth="signup">New here? Create an account</a><a data-auth="reset">Forgot password?</a>` : ''}
+        ${mode==='signup' || mode==='reset' ? `<a data-auth="signin">Already have an account? Sign in</a>` : ''}
+        ${mode!=='newpass' ? `<a data-auth="local" class="faint">Use without an account (this device only)</a>` : ''}
+      </div>
+    </div>`;
+  app.querySelectorAll('[data-auth]').forEach(a=>a.addEventListener('click', ()=>{
+    if(a.dataset.auth==='local'){ try{ localStorage.setItem('cloudOptOut','1'); }catch(e){} location.reload(); return; }
+    showAuthScreen(a.dataset.auth);
+  }));
+  const form = app.querySelector('#authForm');
+  const err = (t)=>{ const e = app.querySelector('#authErr'); e.textContent = t; e.style.display = t ? '' : 'none'; };
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const btn = form.querySelector('.auth-go'); btn.disabled = true; err('');
+    const email = (app.querySelector('#authEmail')||{}).value;
+    const password = (app.querySelector('#authPass')||{}).value;
+    try{
+      if(mode==='signin'){
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if(error) throw error;
+      } else if(mode==='signup'){
+        const { data, error } = await sb.auth.signUp({ email, password, options:{ emailRedirectTo: location.origin+location.pathname } });
+        if(error) throw error;
+        if(!data.session) showAuthScreen('signin', 'Nearly there — check your inbox and tap the link to confirm your email, then sign in here.');
+      } else if(mode==='reset'){
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin+location.pathname });
+        if(error) throw error;
+        showAuthScreen('signin', 'If that email has an account, a reset link is on its way.');
+      } else if(mode==='newpass'){
+        const { data, error } = await sb.auth.updateUser({ password });
+        if(error) throw error;
+        showToast('Password updated.');
+        cloudRecovering = false;
+        history.replaceState(null, '', location.pathname);
+        if(cloudEnter) cloudEnter(data.user);
+      }
+    }catch(ex){
+      err(/invalid login/i.test(ex.message||'') ? 'That email and password don’t match.' : (ex.message || 'Something went wrong — try again.'));
+    }finally{ btn.disabled = false; }
+  });
+  setTimeout(()=>autoFocus(app.querySelector('input')), 20);
+}
+
+/** Resolves true once someone's signed in and their log is loaded, or false when
+ *  this device should run without an account. */
+function startCloud(){
+  cloudRecovering = /type=recovery/.test(location.hash + location.search);
+  sb = window.supabase.createClient(CLOUD.url, CLOUD.anonKey, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true } });
+  return new Promise(resolve=>{
+    let settled = false;
+    const enter = cloudEnter = async (user)=>{
+      if(settled || cloudRecovering) return;
+      settled = true;
+      cloudUser = user;
+      document.body.classList.remove('auth-mode');
+      document.getElementById('app').innerHTML = '<div class="loading">Loading your log…</div>';
+      await loadCloudData();
+      resolve(true);
+    };
+    sb.auth.onAuthStateChange((event, session)=>{
+      if(event==='PASSWORD_RECOVERY'){ showAuthScreen('newpass'); return; }
+      if(session && session.user && event!=='PASSWORD_RECOVERY') setTimeout(()=>enter(session.user), 0);
+      if(event==='SIGNED_OUT' && settled) location.reload();
+    });
+    if(cloudRecovering){ showAuthScreen('newpass'); return; }
+    sb.auth.getSession().then(({ data })=>{
+      if(data && data.session){ enter(data.session.user); return; }
+      if(localOnlyChosen()){ settled = true; resolve(false); return; }
+      if(!settled) showAuthScreen('signin');
+    }).catch(()=>{ if(!settled) showAuthScreen('signin'); });
+  });
+}
+async function signOut(){
+  if(cloudSync.dirty){
+    await pushCloud();
+    if(cloudSync.dirty){
+      const ok = await confirmDialog("Some of your latest changes haven't reached your account yet (no connection?). Signing out now would lose them from this device.", 'Sign out anyway');
+      if(!ok) return;
+    }
+  }
+  // don't leave a copy of someone's log behind on a shared device
+  try{
+    localStorage.removeItem(localKey); localStorage.removeItem(syncMetaKey()); localStorage.removeItem('lastCloudUser');
+    Object.keys(localStorage).filter(k=>k.startsWith('workoutDrafts:')).forEach(k=>localStorage.removeItem(k));
+  }catch(e){}
+  await sb.auth.signOut();
+  location.reload();
+}
 function setTheme(name){
   DATA.theme = name;
   document.body.dataset.theme = name;
@@ -6228,10 +6562,12 @@ document.getElementById('volBtn').addEventListener('click', openSetVolumeModal);
 document.getElementById('prsBtn').addEventListener('click', openPRsModal);
 document.getElementById('trashLink').addEventListener('click', openTrashModal);
 document.getElementById('resetLink').addEventListener('click', async ()=>{
-  const ok = await confirmDialog('Reset all data back to the original sample log? This cannot be undone.', 'Reset');
+  const ok = await confirmDialog(cloudUser
+    ? 'Clear your whole training log — on every device you’re signed in on? This cannot be undone (Export data first if you want a copy).'
+    : 'Reset all data back to the original sample log? This cannot be undone.', cloudUser ? 'Clear it' : 'Reset');
   if(!ok) return;
   const theme = DATA.theme;
-  DATA = seedData();
+  DATA = cloudUser ? emptyData() : seedData();
   DATA.theme = theme;
   await persist();
   render();
@@ -6386,6 +6722,22 @@ document.getElementById('importFileInput').addEventListener('change', async (e)=
 });
 
 (async function init(){
+  if(cloudAvailable() && await startCloud()){
+    migrateData();
+    updateStorageNote();
+    render();
+    startSyncLoop();
+    setTimeout(flagOddRepsInLog, 900);
+    return;
+  }
+  if(cloudWanted() && !cloudAvailable() && !localOnlyChosen()){
+    // the sign-in library didn't load (offline?): open the last account's copy on
+    // this device rather than a blank log; it syncs on the next online visit
+    try{
+      const last = JSON.parse(localStorage.getItem('lastCloudUser')||'null');
+      if(last){ localKey = 'trainingData:'+last.id; }
+    }catch(e){}
+  }
   await loadData();
   migrateData();
   updateStorageNote();

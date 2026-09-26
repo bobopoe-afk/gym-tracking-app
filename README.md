@@ -31,14 +31,10 @@ means:
 - The "Storage debug" link in the footer will report the bridge as never
   found. That's expected here, not an error.
 
-**If you want real cross-device sync again**, the cleanest path is to swap
-the storage layer for a real backend — Supabase and Firebase both work well
-for this shape of data (one JSON blob per user, `get`/`set` on load/save).
-The two functions to replace are `loadData()` and `persist()`
-(search for `DB.doc(` — both are right around there). Everything else in the
-app talks to `DATA` (a big in-memory object) and calls `persist()` after any
-change, so the rest of the code doesn't need to know or care where storage
-actually lives.
+**Accounts and cross-device sync** are built in (Supabase): fill in `CLOUD`
+in `index.html` and follow `SUPABASE_SETUP.md`. Each person signs in with
+email + password and gets their own log on every device; with `CLOUD` left
+empty the app stays browser-only as described above.
 
 Data export/import (footer: Export data / Import file / Copy data / Paste
 data) works regardless of storage backend, since it just serializes `DATA`
