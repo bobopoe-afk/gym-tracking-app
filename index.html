@@ -372,6 +372,9 @@
   .loading{ padding:80px 0; text-align:center; color:var(--text-faint); font-size:14px; }
   /* sign-in screen */
   body.auth-mode header, body.auth-mode footer{ display:none; }
+  .split-choices{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:12px; }
+  .split-choice{ text-align:left; text-transform:none; letter-spacing:0; font-family:'IBM Plex Sans',sans-serif; font-size:14px; padding:12px 14px; display:flex; flex-direction:column; gap:3px; }
+  .split-choice span{ font-size:12px; color:var(--text-faint); }
   .auth-card{ max-width:380px; margin:12vh auto 0; }
   .auth-title{ font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:26px; margin:22px 0 14px; }
   .auth-msg{ background:var(--accent-dim); border-left:2px solid var(--accent); padding:10px 12px; font-size:13px; margin:0 0 16px; }
@@ -430,6 +433,7 @@
 
   <footer>
     <span id="storageNote">Saved in this browser.</span>
+    <a id="splitLink">Training split</a> ·
     <a id="trashLink">Recently deleted</a> ·
     <a id="resetLink">Reset to sample data</a> ·
     <a id="exportLink">Export data</a> ·
@@ -456,13 +460,40 @@ const RUN_TYPES = {
   rest:     { label:'Rest day',  color:'#6C6858', hardness:0 },
 };
 
+/* Every exercise belongs to one movement group (CAT_ORDER). Sessions have a type,
+   which is either one of those groups or a combination of them (`groups`), so
+   people who train Push/Pull/Legs, Upper/Lower or Full body get sessions built
+   from the right exercises without re-labelling the exercise library. */
 const CATS = {
-  leg:   { label:'Single-leg', color:'var(--leg)'   },
-  bilat: { label:'Bilateral',  color:'var(--bilat)' },
-  push:  { label:'Push',       color:'var(--push)'  },
-  pull:  { label:'Pull',       color:'var(--pull)'  },
-  aux:   { label:'Core & Auxiliary', color:'var(--aux)'  },
+  leg:   { label:'Single-leg', color:'var(--leg)',   groups:['leg']   },
+  bilat: { label:'Bilateral',  color:'var(--bilat)', groups:['bilat'] },
+  push:  { label:'Push',       color:'var(--push)',  groups:['push']  },
+  pull:  { label:'Pull',       color:'var(--pull)',  groups:['pull']  },
+  aux:   { label:'Core & Auxiliary', color:'var(--aux)', groups:['aux'] },
+  legs:  { label:'Legs',       color:'var(--leg)',   groups:['leg','bilat'] },
+  upper: { label:'Upper',      color:'var(--pull)',  groups:['push','pull'] },
+  lower: { label:'Lower',      color:'var(--leg)',   groups:['leg','bilat'] },
+  full:  { label:'Full body',  color:'var(--bilat)', groups:['leg','bilat','push','pull'] },
 };
+/** Ways of splitting the week. Each lists the session types it uses. */
+const SPLIT_STYLES = {
+  ppl:      { label:'Push / Pull / Legs', desc:'Pressing, pulling and leg days', types:['push','pull','legs','aux'] },
+  ul:       { label:'Upper / Lower', desc:'Alternate upper-body and lower-body days', types:['upper','lower','aux'] },
+  full:     { label:'Full body', desc:'A bit of everything every session', types:['full','aux'] },
+  movement: { label:'Single-leg / Bilateral / Push / Pull', desc:'Legs split by single-leg and two-leg work', types:['leg','bilat','push','pull','aux'] },
+};
+function splitStyle(){ return SPLIT_STYLES[DATA && DATA.splitStyle] ? DATA.splitStyle : 'movement'; }
+/** Session types to offer: the chosen style's, plus any older sessions still use. */
+function sessionTypes(){
+  const types = SPLIT_STYLES[splitStyle()].types.slice();
+  (DATA && DATA.sessions || []).forEach(x=>{ if(CATS[x.cat] && !types.includes(x.cat)) types.splice(types.length-1, 0, x.cat); });
+  return types;
+}
+/** The session type in your split that an exercise group belongs to. */
+function typeForGroup(group){ return SPLIT_STYLES[splitStyle()].types.find(t=>catGroups(t).includes(group)) || group; }
+function catGroups(cat){ return (CATS[cat] && CATS[cat].groups) || [cat]; }
+/** Session types that mean a lot of leg work (kept clear of hard runs when scheduling). */
+function isLegHeavyType(cat){ return catGroups(cat).some(g=>g==='leg'||g==='bilat'); }
 const CAT_ORDER = ['leg','bilat','push','pull','aux'];
 
 const MUSCLE_MAP = {
@@ -2248,6 +2279,18 @@ function scoreExerciseForPool(ex, lastTrained, sortedSessions, todayStr){
  * Anything in the 'aux' category (core, shrugs, neck, wrist, rotator work) already
  * lands at the very end via buildSessionPool's bonus pool, so it isn't tiered here.
  */
+/** The movement a compound lift trains, so a session doesn't stack two of the same. */
+function movementPatternOf(ex){
+  if(movementTierOf(ex)!=='compound') return null;
+  const n = (ex && ex.name || '').toLowerCase();
+  if(/deadlift|\brdl\b|romanian|good morning|hip thrust|back extension/.test(n)) return 'hinge';
+  if(/squat|leg press|lunge|step-?up/.test(n)) return (/single|split|bulgarian|lunge|step/.test(n) ? 'squat-1leg' : 'squat');
+  if(/shoulder press|overhead press|military/.test(n)) return 'press-v';
+  if(/bench|chest press|incline|\bdips?\b|push-?up/.test(n)) return 'press-h';
+  if(/pulldown|pull-?up|chin-?up/.test(n)) return 'pull-v';
+  if(/\brow\b/.test(n)) return 'pull-h';
+  return null;
+}
 function movementTierOf(ex){
   const n = (ex && ex.name || '').toLowerCase();
   // isolation movements that happen to contain a "compound-sounding" word
@@ -2276,7 +2319,8 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   const excludeIds = opts.excludeIds || new Set();
   const avoidMuscles = opts.avoidMuscles || new Set();
   const freeOnly = opts.freeWeightsOnly!==undefined ? opts.freeWeightsOnly : !!DATA.freeWeightsOnly;
-  let exercises = DATA.exercises.filter(e=>e.cat===cat && !excludeIds.has(e.id));
+  const groups = catGroups(cat);
+  let exercises = DATA.exercises.filter(e=>groups.includes(e.cat) && !excludeIds.has(e.id));
   if(freeOnly){
     const freeOnes = exercises.filter(isFreeWeightFriendly);
     // only apply the restriction if it still leaves something to work with, so a
@@ -2296,17 +2340,34 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   // muscles the rest of the session already covers are treated as already-hit, so an
   // aux add-on complements the main work instead of doubling up on it
   const covered = new Set(avoidMuscles);
-  // first pass: best-scoring exercise for each not-yet-covered muscle group
+  // one big lift per movement pattern: a deadlift and an RDL are both hinges, so a
+  // session doesn't get both while having no squat
+  const patterns = new Set();
+  const take = (c)=>{ chosen.push(c); c.muscles.forEach(m=>covered.add(m)); const pt = movementPatternOf(c.ex); if(pt) patterns.add(pt); };
+  const patternFree = (c)=>{ const pt = movementPatternOf(c.ex); return !pt || !patterns.has(pt); };
+  // a combined day (full body, upper, lower, legs) opens with a main lift from each
+  // of its groups, so full body always has a leg, a push and a pull
+  if(groups.length>1){
+    groups.forEach(g=>{
+      if(chosen.length>=limit) return;
+      const c = scored.find(x=>x.ex.cat===g && !chosen.includes(x) && movementTierOf(x.ex)==='compound' && patternFree(x));
+      if(c) take(c);
+    });
+  }
+  // then: best-scoring exercise for each not-yet-covered muscle group
   scored.forEach(c=>{
-    if(chosen.length>=limit) return;
-    if(c.muscles.some(m=>covered.has(m))) return;
-    chosen.push(c);
-    c.muscles.forEach(m=>covered.add(m));
+    if(chosen.length>=limit || chosen.includes(c)) return;
+    if(c.muscles.some(m=>covered.has(m)) || !patternFree(c)) return;
+    take(c);
   });
-  // second pass: top up by raw score if diversity left us short
+  // top up by score, still avoiding a repeated movement pattern
   scored.forEach(c=>{
-    if(chosen.length>=limit) return;
-    if(chosen.includes(c)) return;
+    if(chosen.length>=limit || chosen.includes(c) || !patternFree(c)) return;
+    take(c);
+  });
+  // and only if that still leaves us short, allow repeats
+  scored.forEach(c=>{
+    if(chosen.length>=limit || chosen.includes(c)) return;
     chosen.push(c);
   });
   const picked = chosen.slice(0, limit).map(c=>c.ex);
@@ -2558,13 +2619,20 @@ function renderTodayCard(sortedSessions){
 
   const futureSessions = sortedSessions.filter(s=>s.date>todayStr);
   const lastAnyByCat = {};
-  CAT_ORDER.forEach(c=>{
+  sessionTypes().forEach(c=>{
     const s = sortedSessions.filter(s=>s.cat===c && s.date<=todayStr).slice(-1)[0];
     if(s) lastAnyByCat[c] = s;
   });
+  // one tap to start today's workout of a given type — exercises get picked for you
+  const startButtons = `<div style="margin:6px 0 4px;">
+      <p class="modal-sub" style="margin:0 0 8px;">Start a workout:</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${sessionTypes().map(c=>`<button class="btn ${c===sessionTypes()[0]?'primary':'ghost'}" data-start-type="${c}"><span class="dot" style="background:${CATS[c].color};display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;"></span>${CATS[c].label}</button>`).join('')}
+      </div>
+    </div>`;
   const repeatButtons = Object.keys(lastAnyByCat).length ? `
     <div style="margin:12px 0 4px;">
-      <p class="modal-sub" style="margin:0 0 8px;">Or repeat your last session, with progression applied:</p>
+      <p class="modal-sub" style="margin:0 0 8px;">Or repeat your last one, with progression applied:</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         ${Object.keys(lastAnyByCat).map(c=>`<button class="btn ghost" data-repeat-cat="${c}"><span class="dot" style="background:${CATS[c].color};display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;"></span>${CATS[c].label}</button>`).join('')}
       </div>
@@ -2575,29 +2643,41 @@ function renderTodayCard(sortedSessions){
     return `<div class="featured-card">
       <p class="featured-eyebrow">Nothing logged today</p>
       <h3 class="featured-name">Next planned: ${CATS[next.cat].label}, ${days===1?'tomorrow':'in '+days+' days'}</h3>
-      <button class="btn ghost" id="quickAddTodayBtn">+ Log today's session</button>
+      ${startButtons}
       ${repeatButtons}
+      <button class="btn ghost" id="quickAddTodayBtn" style="margin-top:10px;">Log a finished session by typing it</button>
       ${insightBlock}${neglectedBlock}
+    </div>`;
+  }
+  // a brand-new log: ask once how they train, so sessions are built the right way
+  if(!DATA.splitStyle && !DATA.sessions.length){
+    return `<div class="featured-card">
+      <p class="featured-eyebrow">Welcome</p>
+      <h3 class="featured-name">How do you split your training?</h3>
+      <div class="split-choices">${Object.entries(SPLIT_STYLES).map(([k,v])=>`<button class="btn ghost split-choice" data-split-style="${k}"><b>${v.label}</b><span>${v.desc}</span></button>`).join('')}</div>
+      <p class="modal-sub" style="margin:10px 0 0;">You can change this any time from the footer.</p>
     </div>`;
   }
   return `<div class="featured-card">
     <p class="featured-eyebrow">Today</p>
     <h3 class="featured-name">No session logged today</h3>
-    <button class="btn ghost" id="quickAddTodayBtn">+ Log today's session</button>
+    ${startButtons}
     ${repeatButtons}
+    <button class="btn ghost" id="quickAddTodayBtn" style="margin-top:10px;">Log a finished session by typing it</button>
     ${insightBlock}${neglectedBlock}
   </div>`;
 }
 
 function renderLogTab(sortedSessions){
   const app = document.getElementById('app');
-  const cats = activeCat==='all' ? CAT_ORDER : [activeCat];
+  if(activeCat!=='all' && !sessionTypes().includes(activeCat)) activeCat = 'all';
+  const cats = activeCat==='all' ? CAT_ORDER : catGroups(activeCat);
   const featuredHtml = renderTodayCard(sortedSessions);
 
 
   const filterHtml = `<div class="filters">
     <button class="filter-btn ${activeCat==='all'?'active':''}" data-cat="all">All</button>
-    ${CAT_ORDER.map(c=>`<button class="filter-btn ${activeCat===c?'active':''}" data-cat="${c}"><span class="dot" style="background:${CATS[c].color}"></span>${CATS[c].label}</button>`).join('')}
+    ${sessionTypes().map(c=>`<button class="filter-btn ${activeCat===c?'active':''}" data-cat="${c}"><span class="dot" style="background:${CATS[c].color}"></span>${CATS[c].label}</button>`).join('')}
     <span class="view-switch">
       <button class="view-btn ${logView==='sessions'?'active':''}" data-log-view="sessions">Sessions</button>
       <button class="view-btn ${logView==='grid'?'active':''}" data-log-view="grid">Grid</button>
@@ -2630,6 +2710,20 @@ function renderLogTab(sortedSessions){
     ${blocks || '<div class="plan-empty">No exercises yet — add one to get started.</div>'}
   `;
   wireLogEvents(sortedSessions);
+  document.querySelectorAll('[data-split-style]').forEach(b=>b.addEventListener('click', ()=>{
+    DATA.splitStyle = b.dataset.splitStyle; activeCat = 'all';
+    scheduleSave(); render();
+  }));
+  document.querySelectorAll('[data-start-type]').forEach(b=>b.addEventListener('click', ()=>{
+    const todayStr = todayLocal();
+    const existing = DATA.sessions.find(x=>x.date===todayStr && x.cat===b.dataset.startType && !sessionHasActual(x));
+    if(existing){ openWorkoutMode(existing.id); return; }
+    const id = makeSessionId(todayStr);
+    const label = new Date(todayStr+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+    DATA.sessions.push({id, date:todayStr, label, cat:b.dataset.startType, targets:{}});
+    scheduleSave(); render();
+    openWorkoutMode(id);
+  }));
   const quickAddBtn = document.getElementById('quickAddTodayBtn');
   if(quickAddBtn) quickAddBtn.addEventListener('click', ()=>openLogSessionModal());
   const editTodayLogBtn = document.getElementById('editTodayLogBtn');
@@ -3077,7 +3171,7 @@ function openChangeSplitModal(sessionId){
       <h2>Change split</h2>
       <p class="modal-sub">Suggested exercises are drawn from this split. Anything already logged stays put.</p>
       <div class="field"><label for="fSplit">Split</label><select id="fSplit">
-        ${CAT_ORDER.map(c=>`<option value="${c}" ${c===session.cat?'selected':''}>${CATS[c].label}</option>`).join('')}
+        ${sessionTypes().map(c=>`<option value="${c}" ${c===session.cat?'selected':''}>${CATS[c].label}</option>`).join('')}
       </select></div>
       <div class="modal-actions">
         <button class="btn ghost" id="mCancel">Cancel</button>
@@ -3189,7 +3283,7 @@ function renderCalendarTab(sortedSessions){
     }
   }
 
-  const legend = CAT_ORDER.map(c=>`<span class="cal-legend-item"><span class="dot" style="background:${CATS[c].color}"></span>${CATS[c].label}</span>`).join('')
+  const legend = sessionTypes().map(c=>`<span class="cal-legend-item"><span class="dot" style="background:${CATS[c].color}"></span>${CATS[c].label}</span>`).join('')
     + `<span class="cal-legend-item" style="margin-left:14px;">${Object.entries(RUN_TYPES).map(([k,v])=>`<span class="dot" style="background:${v.color}"></span>`).join('')} running plan</span>`;
 
   app.innerHTML = `
@@ -3598,16 +3692,15 @@ function planOneWeek(weekDates, prefs){
   const unmet = [];  // cat instances that couldn't be placed anywhere this week
 
   // place leg-constrained categories first so they get first pick of run-safe days
-  const legLikeCats = ['leg','bilat'];
-  const orderedCats = CAT_ORDER.slice().sort((a,b)=>{
-    const aFirst = legLikeCats.includes(a) ? 0 : 1;
-    const bFirst = legLikeCats.includes(b) ? 0 : 1;
+  const orderedCats = sessionTypes().slice().sort((a,b)=>{
+    const aFirst = isLegHeavyType(a) ? 0 : 1;
+    const bFirst = isLegHeavyType(b) ? 0 : 1;
     return aFirst-bFirst;
   });
 
   orderedCats.forEach(cat=>{
     const want = Math.max(0, (dayCounts[cat]||0) - (existingThisWeekByCat[cat]||0));
-    const isLegLike = legLikeCats.includes(cat);
+    const isLegLike = isLegHeavyType(cat);
     for(let i=0;i<want;i++){
       const primaryPool = (isLegLike ? legSafe : available).filter(d=>!chosen.has(d));
       let pick = pickFarthest(primaryPool, chosen);
@@ -3717,7 +3810,7 @@ function renderAutoPlanTab(){
       const rangeLabel = new Date(wk.weekStart+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + ' – ' + weekEnd.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
 
       const placedRows = [];
-      CAT_ORDER.forEach(cat=>{
+      sessionTypes().forEach(cat=>{
         const items = wk.result[cat] || [];
         items.forEach((item, idx)=>{
           const label = new Date(item.date+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'short'});
@@ -3745,7 +3838,10 @@ function renderAutoPlanTab(){
     }).join('');
   }
 
-  const dayCountFields = CAT_ORDER.map(c=>`
+  // a sensible default week for whichever split you use
+  const defaultCounts = { ppl:{push:1,pull:1,legs:1}, ul:{upper:2,lower:2}, full:{full:3}, movement:{leg:1,bilat:1,push:1,pull:1} }[splitStyle()];
+  if(autoPlanState.style!==splitStyle()){ autoPlanState.style = splitStyle(); autoPlanState.dayCounts = Object.assign({}, defaultCounts); }
+  const dayCountFields = sessionTypes().map(c=>`
     <div class="daycount-field">
       <label><span class="dot" style="background:${CATS[c].color};display:inline-block;width:7px;height:7px;border-radius:50%;"></span>${CATS[c].label}</label>
       <input type="number" min="0" max="7" step="1" value="${autoPlanState.dayCounts[c]||0}" data-daycount-cat="${c}">
@@ -5758,7 +5854,7 @@ function showToast(message, undoFn, actionLabel){
 function openPlanSessionModal(defaultCat, defaultDate){
   const state = {
     date: defaultDate || todayLocal(),
-    cat: defaultCat || CAT_ORDER[0],
+    cat: defaultCat || sessionTypes()[0],
     reducePct: 0,
     freeWeightsOnly: !!DATA.freeWeightsOnly,
     suggestions: null,
@@ -5788,7 +5884,7 @@ function openPlanSessionModal(defaultCat, defaultDate){
     const next = wrap.querySelector('.modal'); if(next) next.scrollTop = top;
   }
   function drawContent(){
-    const catOptions = CAT_ORDER.map(c=>`<option value="${c}" ${c===state.cat?'selected':''}>${CATS[c].label}</option>`).join('');
+    const catOptions = sessionTypes().map(c=>`<option value="${c}" ${c===state.cat?'selected':''}>${CATS[c].label}</option>`).join('');
     let suggBlock = '';
     if(state.suggestions){
       suggBlock = state.suggestions.map((s,idx)=>`
@@ -6243,7 +6339,8 @@ Chest supported row:
       }));
       if(!cat){
         const counts = {};
-        resolved.forEach(r=>{ counts[r.ex.cat] = (counts[r.ex.cat]||0)+1; });
+        // label it with the session type (in your split) that covers most of what you did
+        resolved.forEach(r=>{ const t = typeForGroup(r.ex.cat); counts[t] = (counts[t]||0)+1; });
         cat = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
       }
       DATA.sessions.push({id, date:dateVal, label, cat, targets:{}});
@@ -6599,6 +6696,14 @@ function bodySvg(view, muscles){
 document.getElementById('volBtn').addEventListener('click', openSetVolumeModal);
 document.getElementById('prsBtn').addEventListener('click', openPRsModal);
 document.getElementById('trashLink').addEventListener('click', openTrashModal);
+document.getElementById('splitLink').addEventListener('click', async ()=>{
+  const pick = await chooseDialog('Training split', 'How do you split your sessions? Changing this only affects new sessions — your history stays as it is.',
+    Object.entries(SPLIT_STYLES).map(([k,v])=>({ key:k, label:v.label+(k===splitStyle()?'  ✓':''), hint:v.desc, primary:k===splitStyle() })));
+  if(!pick || pick===splitStyle()) return;
+  DATA.splitStyle = pick; activeCat = 'all';
+  scheduleSave(); render();
+  showToast('Split set to '+SPLIT_STYLES[pick].label+'.');
+});
 document.getElementById('resetLink').addEventListener('click', async ()=>{
   const ok = await confirmDialog(cloudUser
     ? 'Clear your whole training log — on every device you’re signed in on? This cannot be undone (Export data first if you want a copy).'

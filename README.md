@@ -47,8 +47,10 @@ Search for these to jump around:
 - `const DATA = ` / `seedData()` — the whole app's state shape and the
   sample data it starts with on a fresh install
 - `function loadData()` / `function persist()` — storage (see above)
-- `const CATS = ` — the exercise categories (push/pull/leg/bilat/aux) and
-  their colors
+- `const CATS = ` — exercise movement groups (push/pull/leg/bilat/aux) plus
+  combined session types (legs/upper/lower/full) via `groups`;
+  `SPLIT_STYLES` / `sessionTypes()` — the user's chosen split (PPL,
+  upper/lower, full body, or the original five)
 - `function buildSessionPool` / `function buildPoolForSession` — decides
   which exercises get suggested for a new session, in what order
   (compound-first, then accessory; aux always last)
