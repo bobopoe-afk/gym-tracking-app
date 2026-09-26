@@ -1450,8 +1450,8 @@ window.addEventListener('pagehide', ()=>{ if(saveTimer) persist(); });
  * offline; changes push up when the connection's back.
  * Left empty, the app works exactly as before: one log, in this browser only. */
 const CLOUD = {
-  url: '',     // Supabase → Project Settings → API → Project URL
-  anonKey: '', // Supabase → Project Settings → API → anon public key
+  url: 'https://njpnbtgvpsbxhmxndikf.supabase.co',             // Supabase → Project Settings → Data API → Project URL
+  anonKey: 'sb_publishable_0ON7f8aVjKkI1HMPIFeIQA_W3rtTVWR', // Supabase → Project Settings → API Keys → publishable (public) key
 };
 const CLOUD_TABLE = 'training_logs';
 let sb = null;          // Supabase client
