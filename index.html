@@ -375,6 +375,7 @@
   /* sign-in screen */
   body.auth-mode header, body.auth-mode footer{ display:none; }
   .plan-exercises{ margin:-4px 0 12px; font-size:12.5px; line-height:1.9; color:var(--text-dim); }
+  .equip-day{ display:inline-block; vertical-align:middle; margin-left:8px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding:3px 7px; border:1px solid var(--border); border-radius:2px; color:var(--text-dim); }
   .pick-tag{ display:inline-block; vertical-align:middle; font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:500; text-transform:uppercase; letter-spacing:.08em; padding:2px 6px; border-radius:2px; border:1px solid var(--border); color:var(--text-dim); margin-left:4px; }
   .pick-tag.pick-big{ border-color:var(--accent); color:var(--accent); }
   .pick-tag.pick-priority{ border-color:var(--bilat); color:var(--bilat); }
@@ -2396,6 +2397,11 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   const preset = opts.preset || [];                 // already chosen for this session
   const recentIds = opts.recentIds || new Set();    // used earlier this week: only if nothing else fits
   let exercises = DATA.exercises.filter(e=>groups.includes(e.cat) && !excludeIds.has(e.id) && exPriority(e)!=='never' && !preset.includes(e));
+  if(opts.equipMode && cat!=='aux'){
+    const fits = exercises.filter(e=>equipModeOf(e)===opts.equipMode);
+    // only if the day still has enough to choose from
+    if(fits.length >= Math.min(limit, 3)) exercises = fits;
+  }
   if(freeOnly){
     const freeOnes = exercises.filter(isFreeWeightFriendly);
     // only apply the restriction if it still leaves something to work with, so a
@@ -2501,6 +2507,7 @@ function buildPoolForSession(session, sortedSessions, mainLimit, bonusLimit){
   });
   const ordered = applySessionOrder(session, pool);
   ordered.reasons = pool.reasons;
+  ordered.equipMode = pool.equipMode;
   return ordered;
 }
 
@@ -2556,6 +2563,33 @@ function pickTagHTML(reason){ return reason && PICK_TAG[reason] ? ` <span class=
 function isBigLift(ex){ return !!ex && BIG_LIFTS.test(ex.name); }
 function exPriority(ex){ return (ex && ex.priority) || 'normal'; } // 'high' | 'normal' | 'never'
 const VARIETY_AFTER_DAYS = 42;
+/* ---------- alternating free-weight and machine days ----------
+   Per session type (DATA.alternateEquip = {push:true, ...}): each session of that
+   type is the opposite of the last one — a dumbbell/free-weight day, then a
+   machine/cable day. The big barbell lift stays either way. */
+function equipModeOf(ex){ const eq = equipmentOf(ex); return (eq==='machine' || eq==='cable') ? 'machine' : 'free'; }
+const EQUIP_MODE_LABEL = { free:'Free-weight day', machine:'Machine day' };
+/** A session's mode: as planned, or read from what was actually done in it. */
+function sessionEquipMode(sess){
+  if(sess.equipMode) return sess.equipMode;
+  let free = 0, machine = 0;
+  DATA.exercises.forEach(e=>{
+    if(e.cat==='aux' || isBigLift(e)) return;
+    if(!cellSets(e.id+'|'+sess.id).length && !(sess.targets && sess.targets[e.id])) return;
+    equipModeOf(e)==='machine' ? machine++ : free++;
+  });
+  return (free+machine) ? (machine > free ? 'machine' : 'free') : null;
+}
+/** The mode the next `cat` session on `dateStr` should use, or null if not alternating.
+ *  `extra` = sessions being planned alongside that aren't in DATA yet. */
+function nextEquipMode(cat, dateStr, extra){
+  if(!(DATA.alternateEquip||{})[cat]) return null;
+  const prior = DATA.sessions.filter(x=>x.cat===cat && x.date<dateStr).map(x=>({date:x.date, mode:sessionEquipMode(x)}))
+    .concat((extra||[]).filter(x=>x.cat===cat && x.date<dateStr))
+    .filter(x=>x.mode).sort((a,b)=>a.date.localeCompare(b.date));
+  const last = prior[prior.length-1];
+  return last && last.mode==='free' ? 'machine' : 'free';
+}
 /** Days since this exercise was last logged (Infinity if never). */
 function daysSinceDone(ex, sortedSessions, todayStr){
   for(let i=sortedSessions.length-1;i>=0;i--){
@@ -2583,6 +2617,7 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
   const forced = [];
   const groups = catGroups(cat);
   const loggedSessions = sortedSessions.filter(x=>sessionHasActual(x)).length;
+  const equipMode = opts.equipMode!==undefined ? opts.equipMode : nextEquipMode(cat, todayStr, opts.plannedExtra);
   const eligible = DATA.exercises.filter(e=>!excludeIds.has(e.id) && exPriority(e)!=='never');
   const overdue = (a,b)=>daysSinceDone(b, sortedSessions, todayStr) - daysSinceDone(a, sortedSessions, todayStr);
 
@@ -2601,12 +2636,13 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
     eligible.filter(e=>exPriority(e)==='high' && groups.includes(e.cat) && !forced.includes(e) && !recent.has(e.id))
       .sort(overdue).slice(0,2).forEach(e=>{ forced.push(e); reasons[e.id] = 'priority'; });
   }
-  let main = pickPoolForCat(cat, sortedSessions, Math.max(0, mainLimit - forced.length), Object.assign({}, opts, { preset: forced, recentIds: recent }));
+  let main = pickPoolForCat(cat, sortedSessions, Math.max(0, mainLimit - forced.length), Object.assign({}, opts, { preset: forced, recentIds: recent, equipMode }));
 
   // 3. one slot for something new to you (only once there's a routine to vary from)
   if(cat!=='aux' && DATA.variety!==false && loggedSessions>=5){
     const chosenIds = new Set(forced.concat(main).map(e=>e.id));
     const novel = eligible.filter(e=>groups.includes(e.cat) && !chosenIds.has(e.id) && !recent.has(e.id)
+      && (!equipMode || equipModeOf(e)===equipMode)
       && daysSinceDone(e, sortedSessions, todayStr) >= VARIETY_AFTER_DAYS
       && !(movementPatternOf(e) && forced.concat(main).some(x=>movementPatternOf(x)===movementPatternOf(e))));
     if(novel.length){
@@ -2637,6 +2673,7 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
     pool = mainPool.concat(bonusPool);
   }
   pool.reasons = reasons;
+  pool.equipMode = equipMode;
   return pool;
 }
 
@@ -3934,10 +3971,11 @@ function fillWeekWorkouts(weeks){
     const from = new Date(it.date+'T00:00:00'); from.setDate(from.getDate()-6);
     const fromStr = fmtLocalDate(from);
     planned.filter(p=>p.date>=fromStr && p.date<it.date).forEach(p=>p.exIds.forEach(id=>recent.add(id)));
-    const pool = buildSessionPool(it.cat, sortedSessions, 6, 2, { date: it.date, recentIds: recent });
+    const pool = buildSessionPool(it.cat, sortedSessions, 6, 2, { date: it.date, recentIds: recent, plannedExtra: planned });
     it.exIds = pool.map(e=>e.id);
     it.reasons = pool.reasons || {};
-    planned.push({ date: it.date, exIds: it.exIds });
+    it.equipMode = pool.equipMode || null;
+    planned.push({ date: it.date, exIds: it.exIds, cat: it.cat, mode: it.equipMode });
   });
 }
 function generateAutoPlan(startDateStr, numWeeks, prefs){
@@ -4023,7 +4061,7 @@ function renderAutoPlanTab(){
           const countSuffix = items.length>1 ? ' #'+(idx+1) : '';
           placedRows.push(`<div class="plan-row">
             <span class="cat-pill"><span class="dot" style="background:${CATS[cat].color}"></span>${CATS[cat].label}${countSuffix}</span>
-            <span class="plan-row-date">${label}${item.conflict?' —':''}</span>
+            <span class="plan-row-date">${label}${item.equipMode?` <span class="equip-day">${EQUIP_MODE_LABEL[item.equipMode]}</span>`:''}${item.conflict?' —':''}</span>
             ${item.added ? '<span class="logged-tag" style="flex:none;">✓ Added</span>' : `<button class="btn ghost" data-plan-create="${item.date}" data-plan-cat="${cat}">+ Add</button>`}
           </div>`);
           if(item.exIds) placedRows.push(`<p class="plan-exercises">${item.exIds.map(id=>{ const e = DATA.exercises.find(x=>x.id===id); return e ? escapeHtml(e.name)+pickTagHTML((item.reasons||{})[id]) : ''; }).filter(Boolean).join(' · ')}</p>`);
@@ -4072,6 +4110,10 @@ function renderAutoPlanTab(){
       <div class="cat-block-head"><div class="cat-block-title">Auto-schedule lifting days</div></div>
       <p class="modal-sub" style="margin:0 0 6px;">Choose exactly how many sessions of each kind you want this week. Leg/bilateral days avoid the day before/after a long run, tempo effort, or race (races get a wider 2-day buffer) when there's a clean day available — if there isn't, you'll still get a suggestion, flagged with the trade-off, rather than nothing at all. Sessions you've already scheduled this week count toward these totals automatically.</p>
       <div class="daycount-grid">${dayCountFields}</div>
+      <div class="gym-chips" style="margin:12px 0 0;">
+        <span>Alternate free-weight and machine days for</span>
+        ${sessionTypes().filter(c=>c!=='aux').map(c=>`<button type="button" class="chip ${(DATA.alternateEquip||{})[c]?'on':''}" data-alt-equip="${c}">${CATS[c].label}</button>`).join('')}
+      </div>
       <div class="plan-controls">
         <div class="field-inline"><label>Start date</label><input type="date" id="planStartDate" value="${autoPlanState.startDate}"></div>
         <div class="field-inline"><label>How many weeks</label><select id="planWeeks">
@@ -4105,6 +4147,14 @@ function renderAutoPlanTab(){
     DATA.runSchedule = (DATA.runSchedule||[]).filter(r=>r.date!==btn.dataset.delRun);
     scheduleSave(); render();
   }));
+  document.querySelectorAll('[data-alt-equip]').forEach(b=>b.addEventListener('click', ()=>{
+    DATA.alternateEquip = DATA.alternateEquip || {};
+    const c = b.dataset.altEquip;
+    if(DATA.alternateEquip[c]) delete DATA.alternateEquip[c]; else DATA.alternateEquip[c] = true;
+    scheduleSave();
+    if(autoPlanState.weeks) fillWeekWorkouts(autoPlanState.weeks);
+    render();
+  }));
   document.querySelectorAll('[data-daycount-cat]').forEach(inp=>inp.addEventListener('change', e=>{
     autoPlanState.dayCounts[e.target.dataset.daycountCat] = Math.max(0, Math.min(7, parseInt(e.target.value,10)||0));
   }));
@@ -4120,6 +4170,7 @@ function renderAutoPlanTab(){
     const id = createPlannedSession(item.date, item.cat, item.exIds, null);
     const sess = DATA.sessions.find(x=>x.id===id);
     sess.picks = item.reasons || {};
+    if(item.equipMode) sess.equipMode = item.equipMode;
     item.added = id;
   };
   document.querySelectorAll('[data-plan-create]').forEach(btn=>{
@@ -5432,6 +5483,7 @@ function openWorkoutMode(sessionId){
     });
     session.order = pool.map(e=>e.id);
     session.picks = pool.reasons || {};
+    if(pool.equipMode) session.equipMode = pool.equipMode;
     scheduleSave();
   }
   let prsThisWorkout = 0;
@@ -5578,7 +5630,7 @@ function openWorkoutMode(sessionId){
     const top = overlay.scrollTop;
     overlay.innerHTML = `
       <div class="workout-head">
-        <div class="workout-title">${CATS[session.cat].label} · ${session.label}</div>
+        <div class="workout-title">${CATS[session.cat].label} · ${session.label}${session.equipMode ? `<span class="equip-day">${EQUIP_MODE_LABEL[session.equipMode]}</span>` : ''}</div>
         <button class="btn" data-finish>Finish</button>
       </div>
       ${gymBarHTML()}
