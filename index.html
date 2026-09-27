@@ -321,20 +321,29 @@
   /* tap-to-log sets */
   .set-list{ margin:10px 0 4px; }
   .set-row{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
-  .set-tick{ flex:none; width:34px; height:34px; border-radius:50%; border:1.5px solid var(--border); background:none; color:var(--text-dim); font-family:'IBM Plex Mono',monospace; font-size:12px; cursor:pointer; touch-action:manipulation; }
-  .set-tick.on{ border-color:#4CAF50; background:#4CAF50; color:#fff; font-size:15px; }
+  .set-n{ width:14px; flex:none; color:var(--text-faint); font-family:'IBM Plex Mono',monospace; font-size:12px; text-align:center; }
+  .set-tick{ flex:none; width:44px; height:44px; border-radius:50%; border:2px solid var(--border); background:none; color:var(--text-faint); font-size:19px; font-weight:700; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; transition:background .15s ease, border-color .15s ease, color .15s ease; }
+  .set-tick:active{ border-color:#4CAF50; color:#4CAF50; }
+  .set-tick.on{ border-color:#4CAF50; background:#4CAF50; color:#fff; }
+  .set-tick.pop{ animation:tickPop .45s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes tickPop{ 0%{ transform:scale(.6); } 60%{ transform:scale(1.18); box-shadow:0 0 0 8px rgba(76,175,80,.25); } 100%{ transform:scale(1); box-shadow:0 0 0 0 rgba(76,175,80,0); } }
+  @media (prefers-reduced-motion: reduce){ .set-tick.pop{ animation:none; } }
   .set-row.is-done .set-val{ color:var(--text-dim); }
   .stepper{ display:flex; align-items:center; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); flex:1; min-width:0; max-width:170px; }
-  .stepper button{ flex:none; width:40px; height:44px; background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
-  .stepper button:active{ background:var(--accent-dim); }
+  .stepper button:not(.set-val){ flex:none; width:36px; height:44px; background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  .stepper button:not(.set-val):active{ background:var(--accent-dim); }
   .stepper.static{ justify-content:center; height:46px; }
   .set-val{ flex:1; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; white-space:nowrap; }
   .set-val small{ font-weight:400; color:var(--text-faint); font-size:10px; margin-left:2px; }
   .set-val.unset{ color:var(--accent); }
-  button.set-val{ background:none; border:none; padding:0; min-width:0; cursor:text; color:var(--text); touch-action:manipulation; }
+  button.set-val{ flex:1; background:none; border:none; padding:0; min-width:0; height:44px; cursor:text; color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; touch-action:manipulation; }
   button.set-val.unset{ color:var(--accent); }
   .set-val.long{ font-size:13px; letter-spacing:-.02em; }
-  .set-val{ overflow:hidden; }
+  .set-val{ overflow:hidden; text-overflow:clip; }
+  @media (max-width:480px){
+    .stepper button:not(.set-val){ width:32px; }
+    .set-val small{ font-size:9px; margin-left:1px; }
+  }
   .set-val-input{ flex:1; min-width:0; width:100%; height:40px; text-align:center; background:var(--surface); border:1px solid var(--accent); border-radius:6px; color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:600; }
   .set-del{ flex:none; width:30px; height:44px; background:none; border:none; color:var(--text-faint); font-size:18px; cursor:pointer; touch-action:manipulation; }
   .workout-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
@@ -376,6 +385,8 @@
   body.auth-mode header, body.auth-mode footer{ display:none; }
   .plan-exercises{ margin:-4px 0 12px; font-size:12.5px; line-height:1.9; color:var(--text-dim); }
   .equip-day{ display:inline-block; vertical-align:middle; margin-left:8px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding:3px 7px; border:1px solid var(--border); border-radius:2px; color:var(--text-dim); }
+  .summary-cheer{ font-size:15px; line-height:1.45; color:var(--text); border-left:3px solid #4CAF50; padding:6px 12px; margin:0 0 18px; }
+  .sess-section-head{ display:flex; align-items:center; justify-content:space-between; margin:18px 0 8px; font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.14em; color:var(--text-faint); }
   .clash-block{ border-color:var(--accent); }
   .pick-tag{ display:inline-block; vertical-align:middle; font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:500; text-transform:uppercase; letter-spacing:.08em; padding:2px 6px; border-radius:2px; border:1px solid var(--border); color:var(--text-dim); margin-left:4px; }
   .pick-tag.pick-big{ border-color:var(--accent); color:var(--accent); }
@@ -2007,9 +2018,53 @@ function renderCategoryBlock(cat, exList, allSessions){
  * (or planned) per session, so a one-exercise session takes one line instead of an
  * entire sparse column in the exercise-by-session grid.
  */
+/** Plain text for the next 7 days: runs and sessions with their exercises and targets,
+ *  ready to paste into notes or a message. */
+function weekPlanText(fromStr){
+  fromStr = fromStr || todayLocal();
+  const days = [];
+  for(let i=0;i<7;i++){ const d = new Date(fromStr+'T00:00:00'); d.setDate(d.getDate()+i); days.push(fmtLocalDate(d)); }
+  const lines = [`Training plan: ${fmtDay(days[0])} – ${fmtDay(days[6])}`, ''];
+  days.forEach(d=>{
+    const runs = (DATA.runSchedule||[]).filter(r=>r.date===d);
+    const sess = DATA.sessions.filter(x=>x.date===d);
+    if(!runs.length && !sess.length) return;
+    lines.push(new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'short'}).toUpperCase());
+    runs.forEach(r=>lines.push(`  🏃 ${RUN_TYPES[r.type].label}${r.label?' — '+r.label:''}`));
+    sess.forEach(x=>{
+      lines.push(`  🏋 ${CATS[x.cat].label}${x.equipMode?' ('+EQUIP_MODE_LABEL[x.equipMode].toLowerCase()+')':''}${sessionHasActual(x)?' — done':''}`);
+      const ids = new Set(Object.keys(x.targets||{}));
+      DATA.exercises.forEach(e=>{ if(cellSets(e.id+'|'+x.id).length) ids.add(e.id); });
+      applySessionOrder(x, DATA.exercises.filter(e=>ids.has(e.id))).forEach(e=>{
+        const logged = cellSets(e.id+'|'+x.id);
+        const text = logged.length ? setsToText(logged) : (targetSets(x, e.id).length ? setsToText(targetSets(x, e.id)) : 'new — find your weight');
+        lines.push(`    • ${e.name}: ${text}`);
+      });
+    });
+    lines.push('');
+  });
+  if(lines.length<=2) lines.push('Nothing planned in the next 7 days.');
+  return lines.join('\n').trim();
+}
+async function copyWeekPlan(){
+  const text = weekPlanText();
+  try{ await navigator.clipboard.writeText(text); showToast('This week’s plan is copied — paste it anywhere.'); }
+  catch(e){
+    const m = openModal(`<div class="modal wide"><button class="modal-close" id="mClose">&times;</button><h2>This week</h2>
+      <textarea readonly style="width:100%;height:320px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:2px;font-family:'IBM Plex Mono',monospace;font-size:12px;">${escapeHtml(text)}</textarea>
+      <div class="modal-actions"><button class="btn primary" id="mDone">Close</button></div></div>`);
+    m.querySelector('#mClose').addEventListener('click', closeModal); m.querySelector('#mDone').addEventListener('click', closeModal);
+    const ta = m.querySelector('textarea'); ta.focus(); ta.select();
+  }
+}
 function renderSessionList(sortedSessions){
-  const visible = (activeCat==='all' ? sortedSessions : sortedSessions.filter(s=>s.cat===activeCat)).slice().reverse();
-  if(!visible.length) return '<div class="plan-empty">No sessions logged yet.</div>';
+  const all = (activeCat==='all' ? sortedSessions : sortedSessions.filter(s=>s.cat===activeCat));
+  if(!all.length) return '<div class="plan-empty">No sessions logged yet.</div>';
+  // what's next reads top-down (soonest first); history reads newest first
+  const todayStr = todayLocal();
+  const upcoming = all.filter(x=>x.date>todayStr || (x.date===todayStr && !sessionHasActual(x)));
+  const past = all.filter(x=>!upcoming.includes(x)).slice().reverse();
+  const visible = upcoming.concat(past);
 
   const rows = visible.map(sess=>{
     const status = sessionStatus(sess);
@@ -2061,10 +2116,15 @@ function renderSessionList(sortedSessions){
         </span>
       </header>
       ${body}
-    </article>`;
+    </article><!--sess-card-end-->`;
   }).join('');
 
-  return `<div class="sess-list">${rows}</div>`;
+  const nUp = upcoming.length;
+  const cards = rows.split('<!--sess-card-end-->');
+  const upHtml = cards.slice(0, nUp).join('');
+  const pastHtml = cards.slice(nUp).join('');
+  return `${nUp ? `<div class="sess-section-head"><span>Coming up</span><button class="btn ghost sess-mini" id="copyWeekBtn">Copy this week</button></div><div class="sess-list">${upHtml}</div>` : ''}
+    ${pastHtml ? `${nUp ? '<div class="sess-section-head"><span>Done</span></div>' : ''}<div class="sess-list">${pastHtml}</div>` : ''}`;
 }
 
 function generateInsight(sortedSessions){
@@ -3054,6 +3114,8 @@ function renderLogTab(sortedSessions){
 }
 
 function wireLogEvents(sortedSessions){
+  const cwb = document.getElementById('copyWeekBtn');
+  if(cwb) cwb.addEventListener('click', copyWeekPlan);
   document.querySelectorAll('.filter-btn').forEach(b=>b.addEventListener('click', ()=>{ activeCat=b.dataset.cat; render(); }));
   document.querySelectorAll('[data-log-view]').forEach(b=>b.addEventListener('click', ()=>{ logView=b.dataset.logView; render(); }));
   const hideEmptyChk = document.getElementById('hideEmptyChk');
@@ -4225,6 +4287,7 @@ function renderAutoPlanTab(){
     </div>` : '';
   app.innerHTML = `
     ${clashHtml}
+    <div style="display:flex; justify-content:flex-end; margin:0 0 10px;"><button class="btn ghost" id="copyWeekPlanBtn">Copy the next 7 days</button></div>
     <div class="cat-block">
       <div class="cat-block-head"><div class="cat-block-title">Your running plan</div></div>
       <p class="modal-sub" style="margin:0 0 14px;">${hasClaude() ? 'Upload a screenshot of your Runna (or any running app) schedule, or add runs by hand' : 'Add your runs'} — long runs, tempo efforts and races get kept clear of leg days.</p>
@@ -4279,6 +4342,8 @@ function renderAutoPlanTab(){
     await offerClashFix(clashes[+b.dataset.fixClash]);
     render();
   }));
+  const cwb = document.getElementById('copyWeekPlanBtn');
+  if(cwb) cwb.addEventListener('click', copyWeekPlan);
   const cpl = document.getElementById('coachPrefsLink');
   if(cpl) cpl.addEventListener('click', openCoachPrefsModal);
   document.querySelectorAll('[data-daycount-cat]').forEach(inp=>inp.addEventListener('change', e=>{
@@ -4876,6 +4941,8 @@ function deterministicSuggestionFor(exId, sortedSessions, machineId){
   const warmups = (topWeight && isRampedCompound(ex, topWeight))
     ? buildWarmups(topWeight, ex)
     : analysis.warmups.map(s=>{ const c = Object.assign({}, s, {rir:null}); delete c.machine; return c; });
+  // single-leg work warms up single-leg too
+  if(analysis.perSide) warmups.forEach(w=>{ w.perSide = true; });
   const untaggedNote = last.untagged ? ' · based on sets logged before gyms were tracked, so check the weight' : '';
   return {
     suggestion: setsToText(warmups.concat(decision.sets)),
@@ -5078,7 +5145,9 @@ function rebuildPRRecordsFromHistory(){ DATA.prRecords = buildPRRecords(); }
 
 /** Announces any records this entry sets against everything else in the log, then
  *  refreshes the cache from scratch. */
-function checkForPR(exId, exName, sessionId){
+/** `announced` (optional, per workout): record kinds already celebrated for an
+ *  exercise, so ticking set after set doesn't re-announce the same volume PR. */
+function checkForPR(exId, exName, sessionId, announced){
   const machineId = machineOfCell(exId+'|'+sessionId);
   const key = prKey(exId, machineId);
   const prior = buildPRRecords(sessionId)[key];
@@ -5086,7 +5155,11 @@ function checkForPR(exId, exName, sessionId){
   const session = DATA.sessions.find(s=>s.id===sessionId);
   const dateStr = session ? session.date : todayLocal();
   // the first time you ever log an exercise sets a baseline, not a record
-  const found = prior ? applySessionToPRRecord(rec, exId, sessionId, dateStr, sessionE1RM(exId, sessionId)) : [];
+  let found = prior ? applySessionToPRRecord(rec, exId, sessionId, dateStr, sessionE1RM(exId, sessionId)) : [];
+  if(announced){
+    found = found.filter(f=>!announced.has(exId+'|'+f.kind));
+    found.forEach(f=>announced.add(exId+'|'+f.kind));
+  }
   rebuildPRRecordsFromHistory();
   if(found.length){
     scheduleSave();
@@ -5707,6 +5780,7 @@ function openWorkoutMode(sessionId){
     scheduleSave();
   }
   let prsThisWorkout = 0;
+  const announcedPRs = new Set();
   // exId -> sets still to do (on screen, not logged yet). Kept in this browser so an
   // unfinished workout survives a reload or the phone killing the tab.
   const DRAFT_KEY = 'workoutDrafts:'+sessionId;
@@ -5784,11 +5858,12 @@ function openWorkoutMode(sessionId){
     const w = loaded
       ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<button type="button" class="set-val ${s.weight.value?'':'unset'} ${String(s.weight.value).length>=4?'long':''}" data-edit-val="w" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the weight">${s.weight.value}<small>kg</small></button>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
       : `<div class="stepper static"><span class="set-val">${formatWeight(s.weight)}</span></div>`;
-    const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<button type="button" class="set-val" data-edit-val="r" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the ${s.isSeconds?'seconds':'reps'}">${s.reps}<small>${s.isSeconds?'sec':'reps'}${s.perSide?' ea':''}</small></button>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
+    const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<button type="button" class="set-val" data-edit-val="r" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the ${s.isSeconds?'seconds':'reps'}">${s.isSeconds ? `${s.reps}<small>s</small>` : `<small>×</small>${s.reps}`}${s.perSide?'<small> ea</small>':''}</button>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
+    // the tick sits at the end of the row: do the set, tap ✓
     const tick = src==='log'
       ? `<button type="button" class="set-tick on" data-untick="${ex.id}" data-i="${i}" aria-label="Set ${n} done — tap to undo">✓</button>`
-      : `<button type="button" class="set-tick" data-tick="${ex.id}" data-i="${i}" aria-label="Mark set ${n} done">${n}</button>`;
-    return `<div class="set-row ${src==='log'?'is-done':''}">${tick}${w}${r}<button type="button" class="set-del" data-del-set="${ex.id}" data-src="${src}" data-i="${i}" aria-label="Remove set">×</button></div>`;
+      : `<button type="button" class="set-tick" data-tick="${ex.id}" data-i="${i}" aria-label="Tick set ${n} done">✓</button>`;
+    return `<div class="set-row ${src==='log'?'is-done':''}"><span class="set-n">${n}</span>${w}${r}${tick}</div>`;
   };
 
   const rowHTML = (e, i)=>{
@@ -5803,6 +5878,7 @@ function openWorkoutMode(sessionId){
            ${todo.length ? `<button type="button" class="btn primary btn-log" data-log="${e.id}" title="Log ${logged.length?'the remaining sets':'every set'} as shown">✓ Done</button>`
                          : logged.length ? `<span class="logged-tag">✓ Logged</span><button type="button" class="btn ghost" data-unlog="${e.id}">Undo</button>` : ''}
            <button type="button" class="btn ghost" data-add-set="${e.id}">+ Set</button>
+           ${(todo.length || logged.length) ? `<button type="button" class="btn ghost" data-drop-set="${e.id}" title="Remove the last set">− Set</button>` : ''}
            <button type="button" class="btn ghost" data-type="${e.id}">Type</button>
          </div>`;
     return `<div class="workout-ex ${done?'done':''}" data-workout-row="${e.id}">
@@ -5883,7 +5959,7 @@ function openWorkoutMode(sessionId){
     clearTimeout(prTimers[exId]);
     if(lowered) rebuildPRRecordsFromHistory();
     else prTimers[exId] = setTimeout(()=>{
-      if(cellSets(keyOf(exId)).length) prsThisWorkout += checkForPR(exId, exById(exId).name, sessionId);
+      if(cellSets(keyOf(exId)).length) prsThisWorkout += checkForPR(exId, exById(exId).name, sessionId, announcedPRs);
     }, 1500);
   };
   const commitText = (input)=>{
@@ -5901,7 +5977,7 @@ function openWorkoutMode(sessionId){
       if(!parseSetsFromText(raw).length){ showToast("Couldn't read that — try something like 50kg 8, 8, 8"); return; }
       setCellFromText(key, raw);
       drafts[exId] = []; saveDrafts(); // typed = the full record for this exercise
-      prsThisWorkout += checkForPR(exId, exById(exId).name, sessionId);
+      prsThisWorkout += checkForPR(exId, exById(exId).name, sessionId, announcedPRs);
       warnIfOddReps(exId, sessionId);
     }
     scheduleSave(); updateStatRow();
@@ -5938,7 +6014,41 @@ function openWorkoutMode(sessionId){
     const logSets = (ex, sets)=>{
       DATA.cells[keyOf(ex.id)] = loggedFor(ex.id).concat(tagSets(sets.map(cloneSet), gymFor(ex)));
       scheduleSave(); updateStatRow();
-      prsThisWorkout += checkForPR(ex.id, ex.name, sessionId);
+      const prs = checkForPR(ex.id, ex.name, sessionId, announcedPRs);
+      prsThisWorkout += prs;
+      return prs;
+    };
+    // a little pat on the back for each set: a pop, a buzz, and a word when it's earned
+    const celebrate = (ex, justLoggedIdx, prs)=>{
+      try{ if(navigator.vibrate) navigator.vibrate(12); }catch(e){}
+      const row = overlay.querySelector(`[data-workout-row="${ex.id}"]`);
+      const t = row && row.querySelectorAll('.set-tick.on')[justLoggedIdx];
+      if(t){ t.classList.add('pop'); }
+      if(prs) return; // the PR message says it better
+      const todoLeft = draftFor(ex).length;
+      const exercisesLeft = pool.filter(e=>!(loggedFor(e.id).length && !draftFor(e).length)).length;
+      // compare like with like: the same weight last time, or last time's top weight
+      const last = lastEntryFor(ex.id, priorSessions, gymFor(ex));
+      const now = loggedFor(ex.id)[justLoggedIdx];
+      const kg = (x)=>x && x.weight && x.weight.type==='kg' ? x.weight.value : 0;
+      let cheer = null;
+      if(last && now){
+        const prevWork = last.sets.filter(isPlausibleSet);
+        const prevTop = prevWork.length ? Math.max(...prevWork.map(kg)) : 0;
+        const sameWeight = prevWork.filter(x=>kg(x)===kg(now) && !!x.isSeconds===!!now.isSeconds);
+        const bestThere = sameWeight.length ? Math.max(...sameWeight.map(x=>x.reps)) : null;
+        const unit = now.isSeconds ? 's' : ' rep';
+        if(bestThere!=null && now.reps>bestThere && (kg(now)>=prevTop*0.85 || !prevTop)){
+          const n = now.reps-bestThere;
+          cheer = `↑ ${n}${unit}${n===1||now.isSeconds?'':'s'} more than last time${kg(now)?' at '+kg(now)+'kg':''}`;
+        } else if(prevTop && kg(now)>prevTop){
+          cheer = `↑ Heavier than last time: ${prevTop}kg → ${kg(now)}kg`;
+        }
+      }
+      if(cheer) showToast(cheer);
+      else if(!todoLeft){
+        showToast(exercisesLeft ? `✓ ${ex.name} done — ${exercisesLeft} to go` : '🎉 Every exercise done — tap Finish');
+      }
     };
     if(d.step){
       const sets = arrFor(d.src, d.ex);
@@ -6009,10 +6119,11 @@ function openWorkoutMode(sessionId){
       if(!st) return;
       if(needsWeight([st])){ showToast('Set the weight with + first.'); return; }
       todo.splice(+d.i, 1);
-      logSets(ex, [st]);
+      const prs = logSets(ex, [st]);
       saveDrafts();
       refreshRow(ex.id);
-      if(!todo.length) advanceFrom(ex.id);
+      celebrate(ex, loggedFor(ex.id).length-1, prs);
+      if(!todo.length) setTimeout(()=>advanceFrom(ex.id), 450);
       return;
     }
     if(d.untick){
@@ -6030,11 +6141,13 @@ function openWorkoutMode(sessionId){
       const ex = exById(d.log);
       const todo = draftFor(ex);
       if(needsWeight(todo)){ showToast('Set the weight with + first.'); return; }
-      logSets(ex, todo);
+      const from = loggedFor(ex.id).length;
+      const prs = logSets(ex, todo);
       drafts[ex.id] = [];
       saveDrafts();
       refreshRow(ex.id);
-      advanceFrom(ex.id);
+      celebrate(ex, from, prs);
+      setTimeout(()=>advanceFrom(ex.id), 450);
       return;
     }
     if(d.unlog){
@@ -6052,6 +6165,19 @@ function openWorkoutMode(sessionId){
       todo.push(last ? stripForDraft(last) : { weight: equipmentOf(ex)==='bodyweight' ? {type:'bw'} : {type:'kg', value:0}, reps: repRangeFor(ex).low, perSide:false, isSeconds:isTimed(ex), rir:null });
       saveDrafts();
       refreshRow(ex.id);
+      return;
+    }
+    if(d.dropSet){
+      // take off the last set still to do; if they're all done, the last one logged
+      const todo = draftFor(exById(d.dropSet));
+      if(todo.length){ todo.pop(); saveDrafts(); }
+      else {
+        const logged = loggedFor(d.dropSet);
+        logged.pop();
+        if(!logged.length) delete DATA.cells[keyOf(d.dropSet)];
+        savedEdit(d.dropSet, true);
+      }
+      refreshRow(d.dropSet);
       return;
     }
     if(d.delSet){
@@ -6219,6 +6345,25 @@ function compareTargetToActual(targetSetsArr, actualSetsArr){
 }
 const TARGET_VERDICT_LABEL = { beaten:'Target beaten', met:'Target met', short:'Held short', heavier:'Heavier, fewer reps', logged:'Logged' };
 
+/** A well-done line for the summary, from whatever's most worth saying. */
+function workoutCheer(session, rows, prs, totalSets){
+  const weekStart = weekStartOf(session.date);
+  const thisWeek = DATA.sessions.filter(x=>x.date>=weekStart && x.date<=session.date && sessionHasActual(x)).length;
+  const beaten = rows.filter(r=>r.verdict==='beaten').length;
+  // consecutive weeks (ending this one) with at least one session logged
+  let streak = 0;
+  for(let w=0; w<52; w++){
+    const d = new Date(weekStart+'T00:00:00'); d.setDate(d.getDate()-7*w);
+    const ws = fmtLocalDate(d), we = new Date(d); we.setDate(we.getDate()+6);
+    if(DATA.sessions.some(x=>x.date>=ws && x.date<=fmtLocalDate(we) && sessionHasActual(x))) streak++; else break;
+  }
+  if(prs>=2) return `${prs} personal records today. That's a proper session.`;
+  if(prs===1) return `A new personal record today — nicely done.`;
+  if(beaten>=2) return `You beat your target on ${beaten} exercises. Progress, right there.`;
+  if(streak>=3) return `${streak} weeks in a row now. Consistency is what builds it — well done.`;
+  if(thisWeek>=2) return `That's session ${thisWeek} this week. Good work showing up.`;
+  return `${totalSets} sets banked. Every one counts — well done.`;
+}
 function showWorkoutSummary(session, pool, priorSessions, prsThisWorkout){
   let totalSets = 0, volumeKg = 0;
   const rows = pool.map(e=>{
@@ -6240,6 +6385,7 @@ function showWorkoutSummary(session, pool, priorSessions, prsThisWorkout){
       <button class="modal-close" id="mClose">&times;</button>
       <h2>Workout complete</h2>
       <p class="modal-sub">${CATS[session.cat].label} · ${session.label}</p>
+      ${rows.length ? `<p class="summary-cheer">${escapeHtml(workoutCheer(session, rows, prsThisWorkout, totalSets))}</p>` : ''}
       <div class="stat-row" style="margin:4px 0 20px;">
         <div class="stat"><b style="font-size:22px;">${rows.length}/${pool.length}</b><span>exercises</span></div>
         <div class="stat"><b style="font-size:22px;">${totalSets}</b><span>sets</span></div>
