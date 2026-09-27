@@ -465,15 +465,16 @@ const RUN_TYPES = {
    people who train Push/Pull/Legs, Upper/Lower or Full body get sessions built
    from the right exercises without re-labelling the exercise library. */
 const CATS = {
-  leg:   { label:'Single-leg', color:'var(--leg)',   groups:['leg']   },
-  bilat: { label:'Bilateral',  color:'var(--bilat)', groups:['bilat'] },
-  push:  { label:'Push',       color:'var(--push)',  groups:['push']  },
-  pull:  { label:'Pull',       color:'var(--pull)',  groups:['pull']  },
-  aux:   { label:'Core & Auxiliary', color:'var(--aux)', groups:['aux'] },
-  legs:  { label:'Legs',       color:'var(--leg)',   groups:['leg','bilat'] },
-  upper: { label:'Upper',      color:'var(--pull)',  groups:['push','pull'] },
-  lower: { label:'Lower',      color:'var(--leg)',   groups:['leg','bilat'] },
-  full:  { label:'Full body',  color:'var(--bilat)', groups:['leg','bilat','push','pull'] },
+  // `lead`: the movement patterns a session of this type opens with, in order
+  leg:   { label:'Single-leg', color:'var(--leg)',   groups:['leg'],   lead:['squat-1leg'] },
+  bilat: { label:'Bilateral',  color:'var(--bilat)', groups:['bilat'], lead:['squat','hinge'] },
+  push:  { label:'Push',       color:'var(--push)',  groups:['push'],  lead:['press-h','press-v'] },
+  pull:  { label:'Pull',       color:'var(--pull)',  groups:['pull'],  lead:['pull-v','pull-h'] },
+  aux:   { label:'Core & Auxiliary', color:'var(--aux)', groups:['aux'], lead:[] },
+  legs:  { label:'Legs',       color:'var(--leg)',   groups:['bilat','leg'], lead:['squat','hinge','squat-1leg'] },
+  upper: { label:'Upper',      color:'var(--pull)',  groups:['push','pull'], lead:['press-h','pull-v','press-v','pull-h'] },
+  lower: { label:'Lower',      color:'var(--leg)',   groups:['bilat','leg'], lead:['squat','hinge','squat-1leg'] },
+  full:  { label:'Full body',  color:'var(--bilat)', groups:['bilat','push','pull','leg'], lead:['squat','press-h','pull-h','hinge'] },
 };
 /** Ways of splitting the week. Each lists the session types it uses. */
 const SPLIT_STYLES = {
@@ -497,6 +498,33 @@ function isLegHeavyType(cat){ return catGroups(cat).some(g=>g==='leg'||g==='bila
 const CAT_ORDER = ['leg','bilat','push','pull','aux'];
 
 const MUSCLE_MAP = {
+  'Walking lunge': {quads:1, glutes:.8, hamstrings:.3, adductors:.3},
+  'Reverse lunge': {quads:.9, glutes:.9, hamstrings:.3, adductors:.3},
+  'Leg extension': {quads:1},
+  'Goblet squat': {quads:1, glutes:.6, adductors:.4, abs:.2},
+  'Front squat': {quads:1, glutes:.6, abs:.3, lowerBack:.3},
+  'Hack squat': {quads:1, glutes:.5},
+  'Nordic hamstring curl': {hamstrings:1},
+  'Glute bridge': {glutes:1, hamstrings:.4},
+  'Good morning': {hamstrings:.9, lowerBack:.7, glutes:.6},
+  'Barbell overhead press': {frontDelt:1, sideDelt:.5, triceps:.6, abs:.2},
+  'Push-up': {chest:1, triceps:.5, frontDelt:.4, abs:.3},
+  'Dumbbell bench press': {chest:1, triceps:.5, frontDelt:.4},
+  'Cable fly': {chest:1, frontDelt:.3},
+  'Overhead cable triceps extension': {triceps:1},
+  'EZ-bar skull crusher': {triceps:1},
+  'Close-grip bench press': {triceps:.9, chest:.8, frontDelt:.3},
+  'Pull-up': {lats:1, biceps:.5, rearDelt:.3, traps:.3, forearms:.3},
+  'Chin-up': {lats:1, biceps:.7, forearms:.3},
+  'Assisted pull-up (machine)': {lats:1, biceps:.5, rearDelt:.3},
+  'One-arm dumbbell row': {lats:1, traps:.4, rearDelt:.4, biceps:.4},
+  'Seated cable row (close grip)': {lats:.9, traps:.5, rearDelt:.4, biceps:.4},
+  'EZ-bar curl': {biceps:1, forearms:.3},
+  'Cable curl': {biceps:1},
+  'Reverse pec deck': {rearDelt:1, traps:.4},
+  'Hanging knee raise': {abs:1, forearms:.3},
+  'Dead bug': {abs:1},
+  "Farmer's carry": {forearms:1, traps:.7, abs:.4},
   'Bulgarian split squat': {quads:1, glutes:.7, hamstrings:.4, adductors:.3},
   'Single-leg Romanian deadlift': {hamstrings:1, glutes:.7, lowerBack:.4},
   'Single-leg leg press': {quads:1, glutes:.5},
@@ -1135,8 +1163,26 @@ const CATEGORY_FIXUPS = {
   'db-shrug':'pull',                // traps
   'cable-y-raise':'pull',           // rear delts / lower traps
   'chest-press':'push',             // was filed under bilateral leg work
+  'back-extension':'bilat',         // a hip hinge (glutes/hamstrings/lower back), so it lands on leg days
 };
 
+/** Common gym exercises everyone gets in their library, beyond the original log's
+ *  own. Added (never duplicated — matched by id or name) on load. On an account
+ *  with training history, ones you've never done are kept out of the automatic
+ *  picks (see exerciseStalenessDays) — they're there to search and swap in. */
+const LIBRARY_ADDITIONS = [
+  ['walking-lunge','Walking lunge','leg'], ['reverse-lunge','Reverse lunge','leg'],
+  ['leg-extension','Leg extension','bilat'], ['goblet-squat','Goblet squat','bilat'], ['front-squat','Front squat','bilat'],
+  ['hack-squat','Hack squat','bilat'], ['nordic-curl','Nordic hamstring curl','bilat'], ['glute-bridge','Glute bridge','bilat'],
+  ['good-morning','Good morning','bilat'],
+  ['overhead-press','Barbell overhead press','push'], ['push-up','Push-up','push'], ['dumbbell-bench-press','Dumbbell bench press','push'],
+  ['cable-fly','Cable fly','push'], ['overhead-triceps-extension','Overhead cable triceps extension','push'],
+  ['skull-crusher','EZ-bar skull crusher','push'], ['close-grip-bench','Close-grip bench press','push'],
+  ['pull-up','Pull-up','pull'], ['chin-up','Chin-up','pull'], ['assisted-pull-up','Assisted pull-up (machine)','pull'],
+  ['one-arm-db-row','One-arm dumbbell row','pull'], ['seated-cable-row','Seated cable row (close grip)','pull'],
+  ['ez-bar-curl','EZ-bar curl','pull'], ['cable-curl','Cable curl','pull'], ['reverse-pec-deck','Reverse pec deck','pull'],
+  ['hanging-knee-raise','Hanging knee raise','aux'], ['dead-bug','Dead bug','aux'], ['farmers-carry',"Farmer's carry",'aux'],
+];
 /** Exercise renames: gym shorthand, brand names, and inconsistent hyphenation
  *  cleaned up to consistent, unambiguous names. */
 const NAME_FIXUPS = {
@@ -1181,6 +1227,15 @@ function migrateData(){
   });
   if(!Array.isArray(DATA.templates)){ DATA.templates = []; changed = true; }
   if(!Array.isArray(DATA.machines)){ DATA.machines = []; changed = true; }
+  {
+    const norm = (n)=>(n||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const haveIds = new Set(DATA.exercises.map(e=>e.id)), haveNames = new Set(DATA.exercises.map(e=>norm(e.name)));
+    LIBRARY_ADDITIONS.forEach(([id,name,cat])=>{
+      if(haveIds.has(id) || haveNames.has(norm(name))) return;
+      DATA.exercises.push({ id, name, cat, library:true });
+      changed = true;
+    });
+  }
   if(!Array.isArray(DATA.trash)){ DATA.trash = []; changed = true; }
   // fold near-duplicate exercise rows together before anything else touches them
   Object.entries(DUPLICATE_MERGES).forEach(([fromId, toId])=>{
@@ -2233,6 +2288,9 @@ function exerciseStalenessDays(ex, sortedSessions, todayStr){
       return Math.min(NEVER_TRAINED_DAYS, Math.round((new Date(todayStr)-new Date(sortedSessions[i].date))/86400000));
     }
   }
+  // a library exercise you've never picked, on a log with real history: don't let
+  // "never done" make it the most overdue thing — you've clearly got your own lineup
+  if(ex.library && sortedSessions.filter(s=>sessionHasActual(s)).length >= 3) return 0;
   return NEVER_TRAINED_DAYS;
 }
 
@@ -2258,6 +2316,7 @@ function rotationJitter(exId){
  * that haven't been performed in a while, so sessions vary instead of replaying
  * whatever was done most recently.
  */
+const STAPLE_EXERCISES = /^(back squat|goblet squat|leg press|romanian deadlift|barbell deadlift|leg curl|leg extension|bulgarian split squat|walking lunge|barbell bench press|dumbbell bench press|incline dumbbell press|barbell overhead press|seated dumbbell shoulder press|lat pulldown|assisted pull-up.*|pull-up|seated cable row.*|one-arm dumbbell row|chest-supported row|dumbbell lateral raise|face pull|cable triceps pressdown|ez-bar curl|standing calf raise|plank|side plank|pallof press|cable crunch|hanging knee raise|dead bug|ab-wheel rollout)$/i;
 function scoreExerciseForPool(ex, lastTrained, sortedSessions, todayStr){
   const muscles = MUSCLE_MAP[ex.name] || guessMuscles(ex.name);
   let weighted = 0, involvementTotal = 0;
@@ -2267,7 +2326,9 @@ function scoreExerciseForPool(ex, lastTrained, sortedSessions, todayStr){
   });
   const neglect = involvementTotal ? weighted/involvementTotal : 0;
   const staleness = exerciseStalenessDays(ex, sortedSessions, todayStr);
-  return neglect*1.0 + staleness*0.6 + rotationJitter(ex.id)*4;
+  // with no history to go on, the standard lifts come before niche ones
+  const staple = (staleness===NEVER_TRAINED_DAYS && STAPLE_EXERCISES.test(ex.name)) ? 30 : 0;
+  return neglect*1.0 + staleness*0.6 + staple + rotationJitter(ex.id)*4;
 }
 
 /**
@@ -2345,11 +2406,18 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   const patterns = new Set();
   const take = (c)=>{ chosen.push(c); c.muscles.forEach(m=>covered.add(m)); const pt = movementPatternOf(c.ex); if(pt) patterns.add(pt); };
   const patternFree = (c)=>{ const pt = movementPatternOf(c.ex); return !pt || !patterns.has(pt); };
-  // a combined day (full body, upper, lower, legs) opens with a main lift from each
-  // of its groups, so full body always has a leg, a push and a pull
+  // open with the session type's key lifts — a leg day gets a squat and a hinge,
+  // full body a squat, press, row and hinge — before anything else competes
+  ((CATS[cat] && CATS[cat].lead) || []).forEach(pt=>{
+    if(chosen.length>=limit || patterns.has(pt)) return;
+    const c = scored.find(x=>!chosen.includes(x) && movementPatternOf(x.ex)===pt);
+    if(c) take(c);
+  });
+  // then a main lift from any group still unrepresented, so full body always has
+  // a leg, a push and a pull even when a pattern above had nothing to offer
   if(groups.length>1){
     groups.forEach(g=>{
-      if(chosen.length>=limit) return;
+      if(chosen.length>=limit || chosen.some(c=>c.ex.cat===g)) return;
       const c = scored.find(x=>x.ex.cat===g && !chosen.includes(x) && movementTierOf(x.ex)==='compound' && patternFree(x));
       if(c) take(c);
     });
@@ -4063,6 +4131,7 @@ function inferRepRange(name){
   const n = (name||'').toLowerCase();
   if(/single-leg|single leg/.test(n) && /deadlift|rdl/.test(n)) return { low:8, high:12 };
   if(/romanian|\brdl\b|stiff-?leg/.test(n)) return { low:6, high:10 };
+  if(/nordic/.test(n)) return { low:3, high:8 };
   if(/deadlift|back squat|front squat|barbell bench|overhead press|power clean|snatch|clean and jerk|trap bar/.test(n)) return { low:3, high:6 };
   if(/squat|bench|press|row|pulldown|pull-?up|chin-?up|dip|hip thrust|leg press|split squat|lunge|step-?up/.test(n)) return { low:6, high:10 };
   if(/plank|hold|carry/.test(n)) return { low:20, high:60 };
@@ -6077,7 +6146,7 @@ function guessCategory(name){
   if(/plank|crunch|ab-?wheel|rollout|pallof|sit-?up|dead ?bug|hollow|oblique|carry|neck|wrist|external rotation|internal rotation|cuff/.test(n)) return 'aux';
   if(/single[- ]leg|bulgarian|pistol|split squat|lunge|step-?up|copenhagen/.test(n)) return 'leg';
   if(/nordic|ham(string)? curl|leg curl|glute[- ]ham/.test(n)) return 'bilat';
-  if(/squat|deadlift|rdl|romanian|leg press|hip thrust|glute bridge|booty|calf raise|hip adduct|hip abduct|good morning/.test(n)) return 'bilat';
+  if(/squat|deadlift|rdl|romanian|leg press|hip thrust|glute bridge|booty|calf raise|hip adduct|hip abduct|good morning|back extension|leg extension/.test(n)) return 'bilat';
   if(/press|bench|push|dip|fly|pec deck|overhead|shoulder press|lateral raise|tricep|pushdown|pressdown/.test(n)) return 'push';
   if(/row|pulldown|pull-?up|chin-?up|\blat\b|curl|face pull|shrug|back extension|straight-arm|rear delt/.test(n)) return 'pull';
   return 'aux';
