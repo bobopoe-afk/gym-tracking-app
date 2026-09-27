@@ -333,6 +333,8 @@
   .set-val.unset{ color:var(--accent); }
   button.set-val{ background:none; border:none; padding:0; min-width:0; cursor:text; color:var(--text); touch-action:manipulation; }
   button.set-val.unset{ color:var(--accent); }
+  .set-val.long{ font-size:13px; letter-spacing:-.02em; }
+  .set-val{ overflow:hidden; }
   .set-val-input{ flex:1; min-width:0; width:100%; height:40px; text-align:center; background:var(--surface); border:1px solid var(--accent); border-radius:6px; color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:600; }
   .set-del{ flex:none; width:30px; height:44px; background:none; border:none; color:var(--text-faint); font-size:18px; cursor:pointer; touch-action:manipulation; }
   .workout-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
@@ -372,6 +374,12 @@
   .loading{ padding:80px 0; text-align:center; color:var(--text-faint); font-size:14px; }
   /* sign-in screen */
   body.auth-mode header, body.auth-mode footer{ display:none; }
+  .plan-exercises{ margin:-4px 0 12px; font-size:12.5px; line-height:1.9; color:var(--text-dim); }
+  .pick-tag{ display:inline-block; vertical-align:middle; font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:500; text-transform:uppercase; letter-spacing:.08em; padding:2px 6px; border-radius:2px; border:1px solid var(--border); color:var(--text-dim); margin-left:4px; }
+  .pick-tag.pick-big{ border-color:var(--accent); color:var(--accent); }
+  .pick-tag.pick-priority{ border-color:var(--bilat); color:var(--bilat); }
+  .pick-tag.pick-new{ border-color:var(--pull); color:var(--pull); }
+  .btn.starred{ color:var(--bilat); border-color:var(--bilat); }
   .split-choices{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:12px; }
   .split-choice{ text-align:left; text-transform:none; letter-spacing:0; font-family:'IBM Plex Sans',sans-serif; font-size:14px; padding:12px 14px; display:flex; flex-direction:column; gap:3px; }
   .split-choice span{ font-size:12px; color:var(--text-faint); }
@@ -499,6 +507,7 @@ const CAT_ORDER = ['leg','bilat','push','pull','aux'];
 
 const MUSCLE_MAP = {
   'Walking lunge': {quads:1, glutes:.8, hamstrings:.3, adductors:.3},
+  'Single-leg hip thrust': {glutes:1, hamstrings:.4, abductors:.3},
   'Reverse lunge': {quads:.9, glutes:.9, hamstrings:.3, adductors:.3},
   'Leg extension': {quads:1},
   'Goblet squat': {quads:1, glutes:.6, adductors:.4, abs:.2},
@@ -1171,7 +1180,7 @@ const CATEGORY_FIXUPS = {
  *  with training history, ones you've never done are kept out of the automatic
  *  picks (see exerciseStalenessDays) — they're there to search and swap in. */
 const LIBRARY_ADDITIONS = [
-  ['walking-lunge','Walking lunge','leg'], ['reverse-lunge','Reverse lunge','leg'],
+  ['walking-lunge','Walking lunge','leg'], ['reverse-lunge','Reverse lunge','leg'], ['single-leg-hip-thrust','Single-leg hip thrust','leg'],
   ['leg-extension','Leg extension','bilat'], ['goblet-squat','Goblet squat','bilat'], ['front-squat','Front squat','bilat'],
   ['hack-squat','Hack squat','bilat'], ['nordic-curl','Nordic hamstring curl','bilat'], ['glute-bridge','Glute bridge','bilat'],
   ['good-morning','Good morning','bilat'],
@@ -1203,7 +1212,7 @@ const NAME_FIXUPS = {
 
 /** Near-duplicate rows that describe the same movement. Data from the source id is
  *  folded into the target id, then the duplicate row is removed. */
-const DUPLICATE_MERGES = { 'hip-abductor-machine':'hip-abductor' };
+const DUPLICATE_MERGES = { 'hip-abductor-machine':'hip-abductor', 'cable-triceps-pressdown':'triceps-pushdown' };
 function migrateData(){
   let changed = false;
   if(!Array.isArray(DATA.runSchedule)){ DATA.runSchedule = []; changed = true; }
@@ -1245,7 +1254,7 @@ function migrateData(){
     Object.keys(DATA.cells).forEach(k=>{
       if(!k.startsWith(fromId+'|')) return;
       const targetKey = toId+'|'+k.slice(fromId.length+1);
-      if(!DATA.cells[targetKey]) DATA.cells[targetKey] = DATA.cells[k];
+      DATA.cells[targetKey] = (DATA.cells[targetKey]||[]).concat(DATA.cells[k]);
       delete DATA.cells[k];
     });
     DATA.sessions.forEach(sess=>{
@@ -1253,7 +1262,10 @@ function migrateData(){
         if(!sess.targets[toId]) sess.targets[toId] = sess.targets[fromId];
         delete sess.targets[fromId];
       }
+      ['order','excluded'].forEach(k=>{ if(Array.isArray(sess[k])) sess[k] = [...new Set(sess[k].map(id=>id===fromId?toId:id))]; });
     });
+    // keep settings made on either one
+    ['priority','equipment','repRangeLow','repRangeHigh'].forEach(k=>{ if(from[k]!=null && to[k]==null) to[k] = from[k]; });
     if(DATA.prRecords[fromId] && !DATA.prRecords[toId]) DATA.prRecords[toId] = DATA.prRecords[fromId];
     delete DATA.prRecords[fromId];
     (DATA.templates||[]).forEach(tpl=>{
@@ -2381,7 +2393,9 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   const avoidMuscles = opts.avoidMuscles || new Set();
   const freeOnly = opts.freeWeightsOnly!==undefined ? opts.freeWeightsOnly : !!DATA.freeWeightsOnly;
   const groups = catGroups(cat);
-  let exercises = DATA.exercises.filter(e=>groups.includes(e.cat) && !excludeIds.has(e.id));
+  const preset = opts.preset || [];                 // already chosen for this session
+  const recentIds = opts.recentIds || new Set();    // used earlier this week: only if nothing else fits
+  let exercises = DATA.exercises.filter(e=>groups.includes(e.cat) && !excludeIds.has(e.id) && exPriority(e)!=='never' && !preset.includes(e));
   if(freeOnly){
     const freeOnes = exercises.filter(isFreeWeightFriendly);
     // only apply the restriction if it still leaves something to work with, so a
@@ -2404,13 +2418,16 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   // one big lift per movement pattern: a deadlift and an RDL are both hinges, so a
   // session doesn't get both while having no squat
   const patterns = new Set();
+  preset.forEach(e=>{ primaryMusclesOf(e).forEach(m=>covered.add(m)); const pt = movementPatternOf(e); if(pt) patterns.add(pt); });
+  const fresh = (c)=>!recentIds.has(c.ex.id);
   const take = (c)=>{ chosen.push(c); c.muscles.forEach(m=>covered.add(m)); const pt = movementPatternOf(c.ex); if(pt) patterns.add(pt); };
   const patternFree = (c)=>{ const pt = movementPatternOf(c.ex); return !pt || !patterns.has(pt); };
   // open with the session type's key lifts — a leg day gets a squat and a hinge,
   // full body a squat, press, row and hinge — before anything else competes
   ((CATS[cat] && CATS[cat].lead) || []).forEach(pt=>{
     if(chosen.length>=limit || patterns.has(pt)) return;
-    const c = scored.find(x=>!chosen.includes(x) && movementPatternOf(x.ex)===pt);
+    const c = scored.find(x=>!chosen.includes(x) && fresh(x) && movementPatternOf(x.ex)===pt)
+           || scored.find(x=>!chosen.includes(x) && movementPatternOf(x.ex)===pt);
     if(c) take(c);
   });
   // then a main lift from any group still unrepresented, so full body always has
@@ -2418,17 +2435,21 @@ function pickPoolForCat(cat, sortedSessions, limit, opts){
   if(groups.length>1){
     groups.forEach(g=>{
       if(chosen.length>=limit || chosen.some(c=>c.ex.cat===g)) return;
-      const c = scored.find(x=>x.ex.cat===g && !chosen.includes(x) && movementTierOf(x.ex)==='compound' && patternFree(x));
+      const c = scored.find(x=>x.ex.cat===g && !chosen.includes(x) && fresh(x) && movementTierOf(x.ex)==='compound' && patternFree(x));
       if(c) take(c);
     });
   }
   // then: best-scoring exercise for each not-yet-covered muscle group
   scored.forEach(c=>{
-    if(chosen.length>=limit || chosen.includes(c)) return;
+    if(chosen.length>=limit || chosen.includes(c) || !fresh(c)) return;
     if(c.muscles.some(m=>covered.has(m)) || !patternFree(c)) return;
     take(c);
   });
-  // top up by score, still avoiding a repeated movement pattern
+  // top up by score, still avoiding a repeated movement pattern (and, first, repeats from earlier in the week)
+  scored.forEach(c=>{
+    if(chosen.length>=limit || chosen.includes(c) || !patternFree(c) || !fresh(c)) return;
+    take(c);
+  });
   scored.forEach(c=>{
     if(chosen.length>=limit || chosen.includes(c) || !patternFree(c)) return;
     take(c);
@@ -2474,9 +2495,13 @@ function buildPoolForSession(session, sortedSessions, mainLimit, bonusLimit){
   const excludedIds = (session.excluded || [])
     .filter(id=> !cellSets(id+'|'+session.id).length); // keep anything already logged
   const pool = buildSessionPool(session.cat, sortedSessions, mainLimit, bonusLimit, {
+    date: session.date,
+    recentIds: exercisesUsedBefore(session.date, 6, session.id),
     excludeIds: new Set(excludedIds),
   });
-  return applySessionOrder(session, pool);
+  const ordered = applySessionOrder(session, pool);
+  ordered.reasons = pool.reasons;
+  return ordered;
 }
 
 /**
@@ -2516,15 +2541,103 @@ function moveExerciseInSession(session, pool, exId, dir){
   return pool;
 }
 
+/* ---------- coaching rules for picking a session ----------
+   On top of the rotation (overdue muscles and exercises come round again):
+   - every session has at least one big barbell lift, the most overdue one that
+     fits the day (rotated through the week, so the row doesn't get forgotten);
+   - exercises you've starred as priorities are always worked in when they fit;
+   - one slot is for something new to you, or not done for 6+ weeks, so you keep
+     learning movements — the rest stays consistent so progression can work;
+   - nothing repeats from earlier in the same week if something else fits;
+   - exercises marked "don't suggest" never get picked automatically. */
+const BIG_LIFTS = /^(back squat|front squat|barbell deadlift|romanian deadlift|barbell bench press|barbell overhead press|bent-over row)$/i;
+const PICK_TAG = { big:'Big lift', priority:'★ Priority', new:'New to you' };
+function pickTagHTML(reason){ return reason && PICK_TAG[reason] ? ` <span class="pick-tag pick-${reason}">${PICK_TAG[reason]}</span>` : ''; }
+function isBigLift(ex){ return !!ex && BIG_LIFTS.test(ex.name); }
+function exPriority(ex){ return (ex && ex.priority) || 'normal'; } // 'high' | 'normal' | 'never'
+const VARIETY_AFTER_DAYS = 42;
+/** Days since this exercise was last logged (Infinity if never). */
+function daysSinceDone(ex, sortedSessions, todayStr){
+  for(let i=sortedSessions.length-1;i>=0;i--){
+    if(sortedSessions[i].date<=todayStr && DATA.cells[ex.id+'|'+sortedSessions[i].id]) return Math.round((new Date(todayStr)-new Date(sortedSessions[i].date))/86400000);
+  }
+  return Infinity;
+}
+/** Exercises in other sessions during the 6 days before `dateStr` (logged or planned). */
+function exercisesUsedBefore(dateStr, days, excludeSessionId){
+  const from = new Date(dateStr+'T00:00:00'); from.setDate(from.getDate()-days);
+  const fromStr = fmtLocalDate(from);
+  const ids = new Set();
+  DATA.sessions.forEach(x=>{
+    if(x.id===excludeSessionId || x.date<fromStr || x.date>=dateStr) return;
+    DATA.exercises.forEach(e=>{ if(cellSets(e.id+'|'+x.id).length || (x.targets && x.targets[e.id])) ids.add(e.id); });
+  });
+  return ids;
+}
 function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
   opts = opts || {};
-  const mainPool = pickPoolForCat(cat, sortedSessions, mainLimit, opts);
-  if(cat==='aux') return mainPool;
-  const bonusPool = pickPoolForCat('aux', sortedSessions, bonusLimit, Object.assign({}, opts, {
-    excludeIds: new Set(mainPool.map(e=>e.id)),
-    avoidMuscles: musclesCoveredBy(mainPool),
-  }));
-  return mainPool.concat(bonusPool);
+  const todayStr = opts.date || todayLocal();
+  const recent = opts.recentIds || exercisesUsedBefore(todayStr, 6);
+  const excludeIds = opts.excludeIds || new Set();
+  const reasons = {};
+  const forced = [];
+  const groups = catGroups(cat);
+  const loggedSessions = sortedSessions.filter(x=>sessionHasActual(x)).length;
+  const eligible = DATA.exercises.filter(e=>!excludeIds.has(e.id) && exPriority(e)!=='never');
+  const overdue = (a,b)=>daysSinceDone(b, sortedSessions, todayStr) - daysSinceDone(a, sortedSessions, todayStr);
+
+  if(cat!=='aux'){
+    // 1. a big lift: from the day's own groups if it has one, otherwise the most
+    //    fitting one from elsewhere (a single-leg day borrows a lower-body lift)
+    let bigs = eligible.filter(e=>isBigLift(e) && groups.includes(e.cat));
+    if(!bigs.length) bigs = eligible.filter(e=>isBigLift(e) && (isLegHeavyType(cat) ? ['leg','bilat'].includes(e.cat) : true));
+    // rotate through the big lifts you actually do (never-done ones only if there are none)
+    const doneBigs = bigs.filter(e=>daysSinceDone(e, sortedSessions, todayStr)!==Infinity);
+    if(doneBigs.length) bigs = doneBigs;
+    const freshBigs = bigs.filter(e=>!recent.has(e.id));
+    const big = (freshBigs.length ? freshBigs : bigs).slice().sort(overdue)[0];
+    if(big){ forced.push(big); reasons[big.id] = 'big'; }
+    // 2. starred priorities that belong to this day (up to two, most overdue first)
+    eligible.filter(e=>exPriority(e)==='high' && groups.includes(e.cat) && !forced.includes(e) && !recent.has(e.id))
+      .sort(overdue).slice(0,2).forEach(e=>{ forced.push(e); reasons[e.id] = 'priority'; });
+  }
+  let main = pickPoolForCat(cat, sortedSessions, Math.max(0, mainLimit - forced.length), Object.assign({}, opts, { preset: forced, recentIds: recent }));
+
+  // 3. one slot for something new to you (only once there's a routine to vary from)
+  if(cat!=='aux' && DATA.variety!==false && loggedSessions>=5){
+    const chosenIds = new Set(forced.concat(main).map(e=>e.id));
+    const novel = eligible.filter(e=>groups.includes(e.cat) && !chosenIds.has(e.id) && !recent.has(e.id)
+      && daysSinceDone(e, sortedSessions, todayStr) >= VARIETY_AFTER_DAYS
+      && !(movementPatternOf(e) && forced.concat(main).some(x=>movementPatternOf(x)===movementPatternOf(e))));
+    if(novel.length){
+      // prefer something that works a muscle the session doesn't already hit, then staples
+      const covered = new Set(forced.concat(main).flatMap(primaryMusclesOf));
+      const adds = (e)=>primaryMusclesOf(e).some(m=>!covered.has(m)) ? 1 : 0;
+      const pick = novel.slice().sort((a,b)=>adds(b)-adds(a) || (STAPLE_EXERCISES.test(b.name)?1:0)-(STAPLE_EXERCISES.test(a.name)?1:0) || rotationJitter(b.id)-rotationJitter(a.id))[0];
+      // it takes the place of the accessory most like it (an EZ-bar curl stands in
+      // for the preacher curl), or else the least important one, so sessions don't
+      // get longer and nothing's doubled up
+      const replaceable = main.filter(e=>movementTierOf(e)!=='compound');
+      const pm = new Set(primaryMusclesOf(pick));
+      const overlap = (e)=>primaryMusclesOf(e).filter(m=>pm.has(m)).length;
+      const similar = replaceable.filter(e=>overlap(e)>0).sort((a,b)=>overlap(b)-overlap(a))[0];
+      const out = similar || (replaceable.length ? replaceable[replaceable.length-1] : (main.length >= mainLimit - forced.length ? main[main.length-1] : null));
+      main = main.filter(e=>e!==out).concat([pick]);
+      reasons[pick.id] = 'new';
+    }
+  }
+  const mainPool = forced.concat(sortByMovementTier(main));
+  let pool = mainPool;
+  if(cat!=='aux'){
+    const bonusPool = pickPoolForCat('aux', sortedSessions, bonusLimit, Object.assign({}, opts, {
+      excludeIds: new Set([...excludeIds, ...mainPool.map(e=>e.id)]),
+      avoidMuscles: musclesCoveredBy(mainPool),
+      recentIds: recent,
+    }));
+    pool = mainPool.concat(bonusPool);
+  }
+  pool.reasons = reasons;
+  return pool;
 }
 
 /** Big lower-body lifts in a session, judged by what's actually in it rather than
@@ -3803,6 +3916,30 @@ function fmtLocalDate(d){
   return `${y}-${m}-${day}`;
 }
 
+function allPlanItems(){
+  const out = [];
+  (autoPlanState.weeks||[]).forEach(wk=>Object.entries(wk.result).forEach(([cat, items])=>items.forEach(it=>{ it.cat = cat; out.push(it); })));
+  return out.sort((a,b)=>a.date.localeCompare(b.date));
+}
+/** Fills each planned day with its exercises, in date order, so the week works as a
+ *  whole: big lifts rotate across the days, priorities land where they fit, and an
+ *  exercise isn't repeated within a few days if something else will do. */
+function fillWeekWorkouts(weeks){
+  const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
+  const planned = []; // {date, exIds} picked so far in this plan
+  const items = [];
+  weeks.forEach(wk=>Object.entries(wk.result).forEach(([cat, list])=>list.forEach(it=>{ it.cat = cat; items.push(it); })));
+  items.sort((a,b)=>a.date.localeCompare(b.date)).forEach(it=>{
+    const recent = exercisesUsedBefore(it.date, 6);
+    const from = new Date(it.date+'T00:00:00'); from.setDate(from.getDate()-6);
+    const fromStr = fmtLocalDate(from);
+    planned.filter(p=>p.date>=fromStr && p.date<it.date).forEach(p=>p.exIds.forEach(id=>recent.add(id)));
+    const pool = buildSessionPool(it.cat, sortedSessions, 6, 2, { date: it.date, recentIds: recent });
+    it.exIds = pool.map(e=>e.id);
+    it.reasons = pool.reasons || {};
+    planned.push({ date: it.date, exIds: it.exIds });
+  });
+}
 function generateAutoPlan(startDateStr, numWeeks, prefs){
   const todayStr = todayLocal();
   // never start planning in the past, even if a stale date is passed in
@@ -3878,18 +4015,20 @@ function renderAutoPlanTab(){
       const rangeLabel = new Date(wk.weekStart+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + ' – ' + weekEnd.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
 
       const placedRows = [];
-      sessionTypes().forEach(cat=>{
-        const items = wk.result[cat] || [];
-        items.forEach((item, idx)=>{
+      const byDate = [];
+      sessionTypes().forEach(cat=>(wk.result[cat]||[]).forEach((item, idx, items)=>byDate.push({cat, item, idx, items})));
+      byDate.sort((a,b)=>a.item.date.localeCompare(b.item.date)).forEach(({cat, item, idx, items})=>{
+        {
           const label = new Date(item.date+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'short'});
           const countSuffix = items.length>1 ? ' #'+(idx+1) : '';
           placedRows.push(`<div class="plan-row">
             <span class="cat-pill"><span class="dot" style="background:${CATS[cat].color}"></span>${CATS[cat].label}${countSuffix}</span>
             <span class="plan-row-date">${label}${item.conflict?' —':''}</span>
-            <button class="btn ghost" data-plan-create="${item.date}" data-plan-cat="${cat}">+ Create session</button>
+            ${item.added ? '<span class="logged-tag" style="flex:none;">✓ Added</span>' : `<button class="btn ghost" data-plan-create="${item.date}" data-plan-cat="${cat}">+ Add</button>`}
           </div>`);
+          if(item.exIds) placedRows.push(`<p class="plan-exercises">${item.exIds.map(id=>{ const e = DATA.exercises.find(x=>x.id===id); return e ? escapeHtml(e.name)+pickTagHTML((item.reasons||{})[id]) : ''; }).filter(Boolean).join(' · ')}</p>`);
           if(item.conflict) placedRows.push(`<p class="plan-error" style="margin:0 0 10px;">${escapeHtml(item.conflict)}</p>`);
-        });
+        }
       });
 
       const unmetCounts = {};
@@ -3903,7 +4042,7 @@ function renderAutoPlanTab(){
         ? `<p class="modal-sub" style="margin:0 0 10px;">Not enough days left in this week to fit that, so this plan starts from next Monday.</p>`
         : '';
       return `<div class="cat-block"><div class="cat-block-head"><div class="cat-block-title">Week of ${rangeLabel}</div></div>${rolledNote}${body}</div>`;
-    }).join('');
+    }).join('') + (allPlanItems().some(it=>it.exIds && !it.added) ? `<button class="btn primary" id="planAddAllBtn" style="width:100%;padding:14px;margin-top:4px;">Add all to my calendar</button>` : '');
   }
 
   // a sensible default week for whichever split you use
@@ -3973,12 +4112,29 @@ function renderAutoPlanTab(){
   document.getElementById('planWeeks').addEventListener('change', e=>{ autoPlanState.numWeeks = parseInt(e.target.value,10); });
   document.getElementById('genPlanBtn').addEventListener('click', ()=>{
     autoPlanState.weeks = generateAutoPlan(autoPlanState.startDate, autoPlanState.numWeeks, {dayCounts: autoPlanState.dayCounts});
+    fillWeekWorkouts(autoPlanState.weeks);
     render();
   });
+  const addPlanned = (item)=>{
+    if(item.added) return;
+    const id = createPlannedSession(item.date, item.cat, item.exIds, null);
+    const sess = DATA.sessions.find(x=>x.id===id);
+    sess.picks = item.reasons || {};
+    item.added = id;
+  };
   document.querySelectorAll('[data-plan-create]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      openPlanSessionModal(btn.dataset.planCat, btn.dataset.planCreate);
+      const item = allPlanItems().find(it=>it.date===btn.dataset.planCreate && it.cat===btn.dataset.planCat);
+      if(item && item.exIds){ addPlanned(item); scheduleSave(); render(); showToast('Added to your calendar.'); }
+      else openPlanSessionModal(btn.dataset.planCat, btn.dataset.planCreate);
     });
+  });
+  const addAll = document.getElementById('planAddAllBtn');
+  if(addAll) addAll.addEventListener('click', ()=>{
+    const items = allPlanItems().filter(it=>it.exIds && !it.added);
+    items.forEach(addPlanned);
+    scheduleSave(); render();
+    showToast(`Added ${items.length} session${items.length===1?'':'s'} to your calendar — each opens ready to log.`);
   });
 }
 
@@ -4294,6 +4450,8 @@ function classifySets(sets){
     if(!isLoaded(s)) return 'work';
     if(s.weight.value===top) return 'top';
     if(i>firstTop) return 'backoff';
+    // just under the top weight before it (45 next to 47.5) is the same effort — a top set
+    if(s.weight.value >= top*0.94 && s.reps >= topMinReps) return 'top';
     return (s.weight.value >= top*0.85 && s.reps >= topMinReps) ? 'work' : 'warmup';
   });
 }
@@ -4304,12 +4462,13 @@ function analyseWorkSets(sets){
   }
   const roles = classifySets(sets);
   const topSets = sets.filter((s,i)=>roles[i]==='top');
-  const workingWeight = topSets[0].weight.value;
+  const workingWeight = Math.max(...topSets.map(s=>s.weight.value));
   const rirs = topSets.map(s=>s.rir).filter(r=>r!=null);
   return {
     bodyweight:false, workingWeight, roles,
     workSets: topSets,
     structure: sets.filter((s,i)=>roles[i]!=='warmup'), // everything but warm-ups, in order
+    structureRoles: roles.filter(r=>r!=='warmup'),
     warmups: sets.filter((s,i)=>roles[i]==='warmup'),
     minReps: Math.min(...topSets.map(s=>s.reps)),
     perSide: topSets.some(s=>s.perSide),
@@ -4365,7 +4524,7 @@ function decideProgression(ex, analysis){
 
   const { workingWeight, minReps } = analysis;
   const structure = analysis.structure.map(clean);
-  const topIdx = structure.map((s,i)=>i).filter(i=>structure[i].weight && structure[i].weight.type==='kg' && structure[i].weight.value===workingWeight);
+  const topIdx = structure.map((s,i)=>i).filter(i=>analysis.structureRoles[i]==='top');
   const easy = analysis.rir!=null && analysis.rir>=3;
 
   if(minReps < low){
@@ -4385,7 +4544,8 @@ function decideProgression(ex, analysis){
     const newWeight = roundToHalf(workingWeight + inc);
     const sets = structure.map((s,i)=>{
       if(!s.weight || s.weight.type!=='kg' || s.isSeconds) return s;
-      const moved = Object.assign(s, { weight:{type:'kg', value: roundToHalf(s.weight.value + inc)} });
+      // top sets all land on the new top weight; others move by the same step
+      const moved = Object.assign(s, { weight:{type:'kg', value: topIdx.includes(i) ? newWeight : roundToHalf(s.weight.value + inc)} });
       if(topIdx.includes(i) && !easy) moved.reps = low;
       return moved;
     });
@@ -5271,6 +5431,7 @@ function openWorkoutMode(sessionId){
       session.targets[e.id] = suggestion ? parseSetsFromText(suggestion) : [];
     });
     session.order = pool.map(e=>e.id);
+    session.picks = pool.reasons || {};
     scheduleSave();
   }
   let prsThisWorkout = 0;
@@ -5349,7 +5510,7 @@ function openWorkoutMode(sessionId){
   const setRowHTML = (ex, s, i, n, src)=>{
     const loaded = s.weight && s.weight.type==='kg';
     const w = loaded
-      ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<button type="button" class="set-val ${s.weight.value?'':'unset'}" data-edit-val="w" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the weight">${s.weight.value}<small>kg</small></button>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
+      ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<button type="button" class="set-val ${s.weight.value?'':'unset'} ${String(s.weight.value).length>=4?'long':''}" data-edit-val="w" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the weight">${s.weight.value}<small>kg</small></button>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
       : `<div class="stepper static"><span class="set-val">${formatWeight(s.weight)}</span></div>`;
     const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<button type="button" class="set-val" data-edit-val="r" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the ${s.isSeconds?'seconds':'reps'}">${s.reps}<small>${s.isSeconds?'sec':'reps'}${s.perSide?' ea':''}</small></button>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
     const tick = src==='log'
@@ -5374,10 +5535,11 @@ function openWorkoutMode(sessionId){
          </div>`;
     return `<div class="workout-ex ${done?'done':''}" data-workout-row="${e.id}">
       <div class="workout-ex-head">
-        <div class="workout-ex-name">${i+1}. ${escapeHtml(e.name)}</div>
+        <div class="workout-ex-name">${i+1}. ${escapeHtml(e.name)}${pickTagHTML((session.picks||{})[e.id])}</div>
         <div class="workout-ex-move">
           <button class="btn ghost" data-ex-up="${e.id}" title="Move earlier" ${i===0?'disabled':''}>↑</button>
           <button class="btn ghost" data-ex-down="${e.id}" title="Move later" ${i===pool.length-1?'disabled':''}>↓</button>
+          <button class="btn ghost ${exPriority(e)==='high'?'starred':''}" data-ex-star="${e.id}" title="${exPriority(e)==='high'?'Priority — tap to unstar':'Star as a priority: always worked into this kind of session'}">${exPriority(e)==='high'?'★':'☆'}</button>
           <button class="btn ghost" data-ex-swap="${e.id}" title="Swap for a different exercise">⇄</button>
           <button class="btn ghost" data-ex-remove="${e.id}" title="Not doing this one — remove from session">×</button>
         </div>
@@ -5664,6 +5826,14 @@ function openWorkoutMode(sessionId){
     if(d.editGyms!==undefined){
       flushTyped();
       openManageGymsModal(()=>{ if(document.body.contains(overlay)){ resetGymDrafts(); renderAll(); } });
+      return;
+    }
+    if(d.exStar){
+      const ex = exById(d.exStar);
+      if(exPriority(ex)==='high') delete ex.priority; else ex.priority = 'high';
+      scheduleSave();
+      showToast(ex.priority==='high' ? `★ ${ex.name} will be worked into every session it fits.` : `${ex.name} is back to normal rotation.`);
+      refreshRow(ex.id);
       return;
     }
     if(d.exUp || d.exDown){
@@ -6529,6 +6699,10 @@ function openDetailModal(exId, sortedSessions, viewGym){
         ${countOn('') ? `<button type="button" class="chip ${!machineId?'on':''}" data-view-gym="">No gym set</button>` : ''}
       </div>
       ${untaggedCount ? `<p class="calc-sub" style="margin:8px 0 0;">${untaggedCount} older entr${untaggedCount===1?'y has':'ies have'} no gym. <a class="inline-link" id="fDetailTagUntagged">Count ${untaggedCount===1?'it':'them'} as ${escapeHtml(machineName(machineId))}</a></p>` : ''}` : ''}
+      <div class="gym-chips" style="margin:12px 0 0;">
+        <span>In automatic plans</span>
+        ${[['high','★ Priority'],['normal','Normal'],['never','Don’t suggest']].map(([k,l])=>`<button type="button" class="chip ${exPriority(ex)===k?'on':''}" data-ex-pref="${k}">${l}</button>`).join('')}
+      </div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12px; color:var(--text-dim);">
         <span>Rep range (drives progression)</span>
         <input type="number" id="fDetailRepLow" min="1" max="50" value="${(ex.repRangeLow)||DEFAULT_REP_RANGE.low}" style="width:56px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;">
@@ -6551,6 +6725,11 @@ function openDetailModal(exId, sortedSessions, viewGym){
 
   const reopen = (gym)=>{ closeModal(); openDetailModal(exId, sortedSessions, gym===undefined ? machineId : gym); };
   m.querySelectorAll('[data-view-gym]').forEach(b=>b.addEventListener('click', ()=>reopen(b.dataset.viewGym)));
+  m.querySelectorAll('[data-ex-pref]').forEach(b=>b.addEventListener('click', ()=>{
+    if(b.dataset.exPref==='normal') delete ex.priority; else ex.priority = b.dataset.exPref;
+    m.querySelectorAll('[data-ex-pref]').forEach(x=>x.classList.toggle('on', x===b));
+    scheduleSave();
+  }));
   const tagUntaggedBtn = m.querySelector('#fDetailTagUntagged');
   if(tagUntaggedBtn) tagUntaggedBtn.addEventListener('click', ()=>{
     const keys = retagExerciseEntries(exId, '', machineId);

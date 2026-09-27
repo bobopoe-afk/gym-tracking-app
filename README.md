@@ -51,6 +51,12 @@ Search for these to jump around:
   combined session types (legs/upper/lower/full) via `groups`;
   `SPLIT_STYLES` / `sessionTypes()` — the user's chosen split (PPL,
   upper/lower, full body, or the original five)
+- `BIG_LIFTS` / `buildSessionPool` — coaching rules on top of the rotation:
+  every session gets a big barbell lift (most overdue first), starred
+  exercises (`ex.priority='high'`) are worked in, one slot is for something
+  new or not done in 6+ weeks (it replaces the most similar accessory), no
+  repeats within the week if avoidable; `priority='never'` is never picked.
+  `fillWeekWorkouts` applies this across Plan my week.
 - `function buildSessionPool` / `function buildPoolForSession` — decides
   which exercises get suggested for a new session, in what order
   (compound-first, then accessory; aux always last)
