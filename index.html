@@ -443,6 +443,7 @@
   <footer>
     <span id="storageNote">Saved in this browser.</span>
     <a id="splitLink">Training split</a> ·
+    <a id="coachLink">Coaching preferences</a> ·
     <a id="trashLink">Recently deleted</a> ·
     <a id="resetLink">Reset to sample data</a> ·
     <a id="exportLink">Export data</a> ·
@@ -2503,6 +2504,7 @@ function buildPoolForSession(session, sortedSessions, mainLimit, bonusLimit){
   const pool = buildSessionPool(session.cat, sortedSessions, mainLimit, bonusLimit, {
     date: session.date,
     recentIds: exercisesUsedBefore(session.date, 6, session.id),
+    sessionId: session.id,
     excludeIds: new Set(excludedIds),
   });
   const ordered = applySessionOrder(session, pool);
@@ -2558,11 +2560,58 @@ function moveExerciseInSession(session, pool, exId, dir){
    - nothing repeats from earlier in the same week if something else fits;
    - exercises marked "don't suggest" never get picked automatically. */
 const BIG_LIFTS = /^(back squat|front squat|barbell deadlift|romanian deadlift|barbell bench press|barbell overhead press|bent-over row)$/i;
-const PICK_TAG = { big:'Big lift', priority:'★ Priority', new:'New to you' };
+const PICK_TAG = { big:'Big lift', weekly:'Weekly lift', priority:'★ Priority', new:'New to you' };
 function pickTagHTML(reason){ return reason && PICK_TAG[reason] ? ` <span class="pick-tag pick-${reason}">${PICK_TAG[reason]}</span>` : ''; }
 function isBigLift(ex){ return !!ex && BIG_LIFTS.test(ex.name); }
 function exPriority(ex){ return (ex && ex.priority) || 'normal'; } // 'high' | 'normal' | 'never'
 const VARIETY_AFTER_DAYS = 42;
+/* ---------- coaching preferences (per account, all off by default) ----------
+   DATA.coach = { bigLift, variety, weekly:[exercise ids] }; alternating
+   equipment lives in DATA.alternateEquip. A new account gets plain rotation. */
+function coachPrefs(){ return DATA.coach || (DATA.coach = { bigLift:false, variety:false, weekly:[] }); }
+/** Exercise ids done or planned in the Mon–Sun week containing dateStr. */
+function exercisesInWeek(dateStr, excludeSessionId, extraPlanned){
+  const start = weekStartOf(dateStr);
+  const endD = new Date(start+'T00:00:00'); endD.setDate(endD.getDate()+6);
+  const end = fmtLocalDate(endD);
+  const ids = new Set();
+  DATA.sessions.forEach(x=>{
+    if(x.id===excludeSessionId || x.date<start || x.date>end) return;
+    Object.keys(x.targets||{}).forEach(id=>ids.add(id));
+    DATA.exercises.forEach(e=>{ if(cellSets(e.id+'|'+x.id).length) ids.add(e.id); });
+  });
+  (extraPlanned||[]).forEach(p=>{ if(p.date>=start && p.date<=end) (p.exIds||[]).forEach(id=>ids.add(id)); });
+  return ids;
+}
+/** Weekly lifts still missing this week that belong in a `cat` session. */
+function weeklyLiftsNeeded(cat, dateStr, excludeSessionId, extraPlanned){
+  const want = coachPrefs().weekly || [];
+  if(!want.length || cat==='aux') return [];
+  const have = exercisesInWeek(dateStr, excludeSessionId, extraPlanned);
+  const groups = catGroups(cat);
+  return want.map(id=>DATA.exercises.find(e=>e.id===id)).filter(e=>e && !have.has(e.id) && groups.includes(e.cat));
+}
+/** Hands each weekly lift the week still needs to one of the planned sessions:
+ *  the relevant session first (bench → push, squat → legs), a deadlift can go on a
+ *  pull day, and failing that whichever session has the least on it. */
+function assignWeeklyLifts(items){
+  const want = coachPrefs().weekly || [];
+  items.forEach(it=>{ it.must = []; });
+  if(!want.length) return;
+  const byWeek = {};
+  items.forEach(it=>{ (byWeek[weekStartOf(it.date)] = byWeek[weekStartOf(it.date)] || []).push(it); });
+  Object.values(byWeek).forEach(list=>{
+    const have = exercisesInWeek(list[0].date);
+    want.map(id=>DATA.exercises.find(e=>e.id===id)).filter(e=>e && !have.has(e.id)).forEach(lift=>{
+      const usable = list.filter(it=>it.cat!=='aux');
+      const fewest = (arr)=>arr.slice().sort((a,b)=>a.must.length-b.must.length)[0];
+      const home = fewest(usable.filter(it=>catGroups(it.cat).includes(lift.cat)))
+        || (movementPatternOf(lift)==='hinge' ? fewest(usable.filter(it=>catGroups(it.cat).includes('pull'))) : null)
+        || fewest(usable);
+      if(home) home.must.push(lift);
+    });
+  });
+}
 /* ---------- alternating free-weight and machine days ----------
    Per session type (DATA.alternateEquip = {push:true, ...}): each session of that
    type is the opposite of the last one — a dumbbell/free-weight day, then a
@@ -2621,7 +2670,10 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
   const eligible = DATA.exercises.filter(e=>!excludeIds.has(e.id) && exPriority(e)!=='never');
   const overdue = (a,b)=>daysSinceDone(b, sortedSessions, todayStr) - daysSinceDone(a, sortedSessions, todayStr);
 
-  if(cat!=='aux'){
+  // 0. lifts you want every week that this week still needs, if they belong here
+  const must = opts.must || weeklyLiftsNeeded(cat, todayStr, opts.sessionId, opts.plannedExtra);
+  must.forEach(e=>{ if(!forced.includes(e)){ forced.push(e); reasons[e.id] = 'weekly'; } });
+  if(cat!=='aux' && coachPrefs().bigLift && !forced.some(isBigLift)){
     // 1. a big lift: from the day's own groups if it has one, otherwise the most
     //    fitting one from elsewhere (a single-leg day borrows a lower-body lift)
     let bigs = eligible.filter(e=>isBigLift(e) && groups.includes(e.cat));
@@ -2632,6 +2684,8 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
     const freshBigs = bigs.filter(e=>!recent.has(e.id));
     const big = (freshBigs.length ? freshBigs : bigs).slice().sort(overdue)[0];
     if(big){ forced.push(big); reasons[big.id] = 'big'; }
+  }
+  if(cat!=='aux'){
     // 2. starred priorities that belong to this day (up to two, most overdue first)
     eligible.filter(e=>exPriority(e)==='high' && groups.includes(e.cat) && !forced.includes(e) && !recent.has(e.id))
       .sort(overdue).slice(0,2).forEach(e=>{ forced.push(e); reasons[e.id] = 'priority'; });
@@ -2639,7 +2693,7 @@ function buildSessionPool(cat, sortedSessions, mainLimit, bonusLimit, opts){
   let main = pickPoolForCat(cat, sortedSessions, Math.max(0, mainLimit - forced.length), Object.assign({}, opts, { preset: forced, recentIds: recent, equipMode }));
 
   // 3. one slot for something new to you (only once there's a routine to vary from)
-  if(cat!=='aux' && DATA.variety!==false && loggedSessions>=5){
+  if(cat!=='aux' && coachPrefs().variety && loggedSessions>=5){
     const chosenIds = new Set(forced.concat(main).map(e=>e.id));
     const novel = eligible.filter(e=>groups.includes(e.cat) && !chosenIds.has(e.id) && !recent.has(e.id)
       && (!equipMode || equipModeOf(e)===equipMode)
@@ -3953,6 +4007,56 @@ function fmtLocalDate(d){
   return `${y}-${m}-${day}`;
 }
 
+function coachSummary(){
+  const c = coachPrefs(), bits = [];
+  const weekly = (c.weekly||[]).map(id=>DATA.exercises.find(e=>e.id===id)).filter(Boolean).map(e=>e.name.toLowerCase());
+  if(weekly.length) bits.push('every week: '+weekly.join(', '));
+  if(c.bigLift) bits.push('a big lift every session');
+  if(c.variety) bits.push('one new exercise per session');
+  const alt = Object.keys(DATA.alternateEquip||{}).filter(k=>CATS[k]);
+  if(alt.length) bits.push('alternating free-weight/machine '+alt.map(k=>CATS[k].label.toLowerCase()).join(', ')+' days');
+  const starred = DATA.exercises.filter(e=>exPriority(e)==='high').length;
+  if(starred) bits.push(starred+' starred');
+  return bits.length ? 'Planning with '+bits.join(' · ') : 'Planning with plain rotation';
+}
+/** Everything that shapes automatic sessions, in one place. All off to start with. */
+function openCoachPrefsModal(){
+  const c = coachPrefs();
+  const bigLifts = DATA.exercises.filter(e=>isBigLift(e));
+  const m = openModal(`
+    <div class="modal">
+      <button class="modal-close" id="mClose">&times;</button>
+      <h2>Coaching preferences</h2>
+      <p class="modal-sub">How the app builds your sessions and weeks. Only yours — other accounts have their own.</p>
+      <div class="field"><label>Every week, make sure I do</label>
+        <div class="gym-chips" style="margin:0;">${bigLifts.map(e=>`<button type="button" class="chip ${(c.weekly||[]).includes(e.id)?'on':''}" data-weekly="${e.id}">${escapeHtml(e.name)}</button>`).join('')}</div>
+        <p class="calc-sub" style="margin:6px 0 0;">Each goes in the session it belongs to (bench on a push day, squat on a leg day) unless you've already done it that week.</p>
+      </div>
+      <label class="toggle-label" style="margin:0 0 12px;"><input type="checkbox" id="cpBig" ${c.bigLift?'checked':''}> Always include a big barbell lift in every session (rotating to the most overdue one)</label>
+      <label class="toggle-label" style="margin:0 0 16px;"><input type="checkbox" id="cpVariety" ${c.variety?'checked':''}> Work in one new exercise per session (or one I haven't done for 6+ weeks)</label>
+      <div class="field"><label>Alternate free-weight and machine days for</label>
+        <div class="gym-chips" style="margin:0;">${sessionTypes().filter(t=>t!=='aux').map(t=>`<button type="button" class="chip ${(DATA.alternateEquip||{})[t]?'on':''}" data-alt-equip="${t}">${CATS[t].label}</button>`).join('')}</div>
+      </div>
+      <p class="calc-sub">To make sure an exercise keeps coming up, star it (☆) in a workout or on its page.</p>
+      <div class="modal-actions"><button class="btn primary" id="mDone">Done</button></div>
+    </div>`);
+  const done = ()=>{ closeModal(); if(autoPlanState.weeks) fillWeekWorkouts(autoPlanState.weeks); render(); };
+  m.querySelector('#mClose').addEventListener('click', done);
+  m.querySelector('#mDone').addEventListener('click', done);
+  m.querySelectorAll('[data-weekly]').forEach(b=>b.addEventListener('click', ()=>{
+    const id = b.dataset.weekly; c.weekly = c.weekly || [];
+    c.weekly = c.weekly.includes(id) ? c.weekly.filter(x=>x!==id) : c.weekly.concat([id]);
+    b.classList.toggle('on'); scheduleSave();
+  }));
+  m.querySelectorAll('[data-alt-equip]').forEach(b=>b.addEventListener('click', ()=>{
+    DATA.alternateEquip = DATA.alternateEquip || {};
+    const t = b.dataset.altEquip;
+    if(DATA.alternateEquip[t]) delete DATA.alternateEquip[t]; else DATA.alternateEquip[t] = true;
+    b.classList.toggle('on'); scheduleSave();
+  }));
+  m.querySelector('#cpBig').addEventListener('change', e=>{ c.bigLift = e.target.checked; scheduleSave(); });
+  m.querySelector('#cpVariety').addEventListener('change', e=>{ c.variety = e.target.checked; scheduleSave(); });
+}
 function allPlanItems(){
   const out = [];
   (autoPlanState.weeks||[]).forEach(wk=>Object.entries(wk.result).forEach(([cat, items])=>items.forEach(it=>{ it.cat = cat; out.push(it); })));
@@ -3966,12 +4070,16 @@ function fillWeekWorkouts(weeks){
   const planned = []; // {date, exIds} picked so far in this plan
   const items = [];
   weeks.forEach(wk=>Object.entries(wk.result).forEach(([cat, list])=>list.forEach(it=>{ it.cat = cat; items.push(it); })));
-  items.sort((a,b)=>a.date.localeCompare(b.date)).forEach(it=>{
+  items.sort((a,b)=>a.date.localeCompare(b.date));
+  assignWeeklyLifts(items);
+  items.forEach(it=>{
     const recent = exercisesUsedBefore(it.date, 6);
     const from = new Date(it.date+'T00:00:00'); from.setDate(from.getDate()-6);
     const fromStr = fmtLocalDate(from);
     planned.filter(p=>p.date>=fromStr && p.date<it.date).forEach(p=>p.exIds.forEach(id=>recent.add(id)));
-    const pool = buildSessionPool(it.cat, sortedSessions, 6, 2, { date: it.date, recentIds: recent, plannedExtra: planned });
+    // a weekly lift may be repeated from earlier in the week only if it was assigned here
+    it.must.forEach(e=>recent.delete(e.id));
+    const pool = buildSessionPool(it.cat, sortedSessions, 6, 2, { date: it.date, recentIds: recent, plannedExtra: planned, must: it.must });
     it.exIds = pool.map(e=>e.id);
     it.reasons = pool.reasons || {};
     it.equipMode = pool.equipMode || null;
@@ -4110,10 +4218,7 @@ function renderAutoPlanTab(){
       <div class="cat-block-head"><div class="cat-block-title">Auto-schedule lifting days</div></div>
       <p class="modal-sub" style="margin:0 0 6px;">Choose exactly how many sessions of each kind you want this week. Leg/bilateral days avoid the day before/after a long run, tempo effort, or race (races get a wider 2-day buffer) when there's a clean day available — if there isn't, you'll still get a suggestion, flagged with the trade-off, rather than nothing at all. Sessions you've already scheduled this week count toward these totals automatically.</p>
       <div class="daycount-grid">${dayCountFields}</div>
-      <div class="gym-chips" style="margin:12px 0 0;">
-        <span>Alternate free-weight and machine days for</span>
-        ${sessionTypes().filter(c=>c!=='aux').map(c=>`<button type="button" class="chip ${(DATA.alternateEquip||{})[c]?'on':''}" data-alt-equip="${c}">${CATS[c].label}</button>`).join('')}
-      </div>
+      <p class="modal-sub" style="margin:12px 0 0;">${coachSummary()} · <a class="inline-link" id="coachPrefsLink">Coaching preferences</a></p>
       <div class="plan-controls">
         <div class="field-inline"><label>Start date</label><input type="date" id="planStartDate" value="${autoPlanState.startDate}"></div>
         <div class="field-inline"><label>How many weeks</label><select id="planWeeks">
@@ -4147,14 +4252,8 @@ function renderAutoPlanTab(){
     DATA.runSchedule = (DATA.runSchedule||[]).filter(r=>r.date!==btn.dataset.delRun);
     scheduleSave(); render();
   }));
-  document.querySelectorAll('[data-alt-equip]').forEach(b=>b.addEventListener('click', ()=>{
-    DATA.alternateEquip = DATA.alternateEquip || {};
-    const c = b.dataset.altEquip;
-    if(DATA.alternateEquip[c]) delete DATA.alternateEquip[c]; else DATA.alternateEquip[c] = true;
-    scheduleSave();
-    if(autoPlanState.weeks) fillWeekWorkouts(autoPlanState.weeks);
-    render();
-  }));
+  const cpl = document.getElementById('coachPrefsLink');
+  if(cpl) cpl.addEventListener('click', openCoachPrefsModal);
   document.querySelectorAll('[data-daycount-cat]').forEach(inp=>inp.addEventListener('change', e=>{
     autoPlanState.dayCounts[e.target.dataset.daycountCat] = Math.max(0, Math.min(7, parseInt(e.target.value,10)||0));
   }));
@@ -6996,6 +7095,7 @@ function bodySvg(view, muscles){
 document.getElementById('volBtn').addEventListener('click', openSetVolumeModal);
 document.getElementById('prsBtn').addEventListener('click', openPRsModal);
 document.getElementById('trashLink').addEventListener('click', openTrashModal);
+document.getElementById('coachLink').addEventListener('click', openCoachPrefsModal);
 document.getElementById('splitLink').addEventListener('click', async ()=>{
   const pick = await chooseDialog('Training split', 'How do you split your sessions? Changing this only affects new sessions — your history stays as it is.',
     Object.entries(SPLIT_STYLES).map(([k,v])=>({ key:k, label:v.label+(k===splitStyle()?'  ✓':''), hint:v.desc, primary:k===splitStyle() })));
