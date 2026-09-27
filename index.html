@@ -782,7 +782,22 @@ function targetSets(session, exId){
 }
 function targetText(session, exId){
   const s = targetSets(session, exId);
-  return s.length ? setsToText(s) : '';
+  if(s.length) return setsToText(s);
+  if(!isPlannedIn(session, exId)) return '';
+  const ex = DATA.exercises.find(e=>e.id===exId);
+  return equipmentOf(ex)==='bodyweight' ? 'New — see how many reps you get on the day' : 'New — no history yet, set the weight on the day';
+}
+/** In the session's plan — including exercises with no suggested sets yet (never
+ *  done, so nothing to base a weight on), which have an empty target. Views that
+ *  only looked for targets *with sets* silently dropped those. */
+function isPlannedIn(session, exId){
+  return !!(session && session.targets && Object.prototype.hasOwnProperty.call(session.targets, exId)
+    && !(session.excluded||[]).includes(exId));
+}
+/** Planned-but-not-logged exercises in the session's own order. */
+function plannedNotLogged(session){
+  const list = DATA.exercises.filter(e=>isPlannedIn(session, e.id) && !cellSets(e.id+'|'+session.id).length);
+  return applySessionOrder(session, list);
 }
 /**
  * Total tonnage for a session: weight × reps, summed across every loaded set.
@@ -844,8 +859,7 @@ function sessionAsText(session){
   });
   DATA.exercises.forEach(e=>{
     if(cellSets(e.id+'|'+session.id).length) return;
-    const tgt = targetSets(session, e.id);
-    if(tgt.length) lines.push(`${e.name} (planned): ${targetText(session, e.id)}`);
+    if(isPlannedIn(session, e.id)) lines.push(`${e.name} (planned): ${targetText(session, e.id)}`);
   });
   return lines.join('\n');
 }
@@ -2004,8 +2018,7 @@ function renderSessionList(sortedSessions){
     // exercises that were planned for this session but haven't been logged yet —
     // shown regardless of whether OTHER exercises in the same session are already
     // done, so logging one exercise never makes the rest look like they vanished
-    const stillPlanned = DATA.exercises
-      .filter(e=>targetSets(sess, e.id).length && !cellSets(e.id+'|'+sess.id).length)
+    const stillPlanned = plannedNotLogged(sess)
       .map(e=>({name:e.name, text:targetText(sess, e.id), id:e.id}));
     const totalSets = logged.reduce((n,x)=>n+cellSets(x.id+'|'+sess.id).length,0);
     const volumeLabel = formatVolume(sessionVolumeKg(sess.id));
@@ -3601,8 +3614,7 @@ function openDayModal(dateStr){
       // Exercises planned for this session but not yet logged — shown whenever
       // they exist, independent of whether OTHER exercises are already done.
       // Logging one exercise must never make the rest of the plan disappear.
-      const plannedEntries = DATA.exercises
-        .filter(e=>targetSets(session, e.id).length && !cellSets(e.id+'|'+session.id).length)
+      const plannedEntries = plannedNotLogged(session)
         .map(e=>({id:e.id, name:e.name, text:targetText(session, e.id)}));
       const plannedHtml = plannedEntries.map(e=>`
             <div style="margin-bottom:12px; display:flex; align-items:baseline; gap:10px;">
@@ -3635,7 +3647,7 @@ function openDayModal(dateStr){
       return `<div style="margin-bottom:22px;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <div class="cat-pill"><span class="dot" style="background:${CATS[session.cat].color}"></span>${CATS[session.cat].label} · ${entries.length} exercise${entries.length===1?'':'s'} · ${totalSets} set${totalSets===1?'':'s'}${formatVolume(sessionVolumeKg(session.id))?` · ${formatVolume(sessionVolumeKg(session.id))}`:''}</div>
+            <div class="cat-pill"><span class="dot" style="background:${CATS[session.cat].color}"></span>${CATS[session.cat].label} · ${entries.length ? `${entries.length} exercise${entries.length===1?'':'s'} · ${totalSets} set${totalSets===1?'':'s'}` : `${plannedEntries.length} exercise${plannedEntries.length===1?'':'s'} planned`}${formatVolume(sessionVolumeKg(session.id))?` · ${formatVolume(sessionVolumeKg(session.id))}`:''}</div>
             ${statusPill}
           </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -3756,7 +3768,7 @@ function openDayModal(dateStr){
       if(st!=='planned' && st!=='in-progress') return;
       const picker = m.querySelector(`#addPlannedExPicker-${session.id}`);
       if(!picker) return;
-      const plannedIds = DATA.exercises.filter(e=>targetSets(session, e.id).length).map(e=>e.id);
+      const plannedIds = DATA.exercises.filter(e=>isPlannedIn(session, e.id)).map(e=>e.id);
       wireExercisePicker(picker, buildExerciseCandidates(plannedIds), (exId)=>{
         session.targets = session.targets || {};
         if(!session.targets[exId]){
