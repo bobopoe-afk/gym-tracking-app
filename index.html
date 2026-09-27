@@ -376,6 +376,7 @@
   body.auth-mode header, body.auth-mode footer{ display:none; }
   .plan-exercises{ margin:-4px 0 12px; font-size:12.5px; line-height:1.9; color:var(--text-dim); }
   .equip-day{ display:inline-block; vertical-align:middle; margin-left:8px; font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding:3px 7px; border:1px solid var(--border); border-radius:2px; color:var(--text-dim); }
+  .clash-block{ border-color:var(--accent); }
   .pick-tag{ display:inline-block; vertical-align:middle; font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:500; text-transform:uppercase; letter-spacing:.08em; padding:2px 6px; border-radius:2px; border:1px solid var(--border); color:var(--text-dim); margin-left:4px; }
   .pick-tag.pick-big{ border-color:var(--accent); color:var(--accent); }
   .pick-tag.pick-priority{ border-color:var(--bilat); color:var(--bilat); }
@@ -3510,6 +3511,7 @@ function openMoveSessionModal(sessionId, onMoved){
     if(ok){
       showToast('Session moved to '+new Date(newDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})+'.');
       if(onMoved) onMoved(newDate); else render();
+      setTimeout(()=>checkClashes(c=>c.session.id===sessionId), 50);
     }
   });
 }
@@ -4213,7 +4215,16 @@ function renderAutoPlanTab(){
     </div>
   `).join('');
 
+  const clashes = findClashes().filter(c=>!isAcceptedClash(c));
+  const clashHtml = clashes.length ? `<div class="cat-block clash-block">
+      <div class="cat-block-head"><div class="cat-block-title">⚠ ${clashes.length} leg day clash${clashes.length===1?'':'es'}</div></div>
+      ${clashes.map((c,i)=>`<div class="plan-row">
+        <span class="plan-row-date" style="flex:1;">${CATS[c.session.cat].label} on ${fmtDay(c.session.date)} · ${RUN_TYPES[c.run.type].label.toLowerCase()} ${c.session.date===c.run.date?'the same day':'on '+fmtDay(c.run.date)}</span>
+        <button class="btn primary" data-fix-clash="${i}">Fix</button>
+      </div>`).join('')}
+    </div>` : '';
   app.innerHTML = `
+    ${clashHtml}
     <div class="cat-block">
       <div class="cat-block-head"><div class="cat-block-title">Your running plan</div></div>
       <p class="modal-sub" style="margin:0 0 14px;">${hasClaude() ? 'Upload a screenshot of your Runna (or any running app) schedule, or add runs by hand' : 'Add your runs'} — long runs, tempo efforts and races get kept clear of leg days.</p>
@@ -4264,6 +4275,10 @@ function renderAutoPlanTab(){
     DATA.runSchedule = (DATA.runSchedule||[]).filter(r=>r.date!==btn.dataset.delRun);
     scheduleSave(); render();
   }));
+  document.querySelectorAll('[data-fix-clash]').forEach(b=>b.addEventListener('click', async ()=>{
+    await offerClashFix(clashes[+b.dataset.fixClash]);
+    render();
+  }));
   const cpl = document.getElementById('coachPrefsLink');
   if(cpl) cpl.addEventListener('click', openCoachPrefsModal);
   document.querySelectorAll('[data-daycount-cat]').forEach(inp=>inp.addEventListener('change', e=>{
@@ -4309,6 +4324,98 @@ function renderAutoPlanTab(){
  *   'push'    — the run already there shifts to the next free day, cascading if needed
  * Returns a restore function for undo, or null if there was nothing to move.
  */
+/* ---------- run / leg-day clashes ----------
+   The week planner keeps heavy leg sessions away from hard runs, but runs get
+   added or moved afterwards. Whenever that happens (and on Plan my week) upcoming
+   leg-heavy sessions are checked against hard runs, and a clash comes with a
+   one-tap fix: move the lifting, or — only if you choose it — move the run. */
+function runBuffer(r){ const rt = RUN_TYPES[r.type]; if(!rt || rt.hardness<1) return -1; return rt.hardness>=3 ? 2 : 1; }
+function isLegHeavySession(sess){
+  if(heavyLowerBodyLifts(sess).length) return true;
+  // a blank planned leg day hasn't been filled in yet, but it will be leg work
+  return isLegHeavyType(sess.cat) && !Object.keys(sess.targets||{}).length && !sessionHasActual(sess);
+}
+function upcomingLegSessions(){
+  const today = todayLocal();
+  return DATA.sessions.filter(x=>x.date>=today && !sessionHasActual(x) && isLegHeavySession(x));
+}
+function findClashes(){
+  const out = [];
+  upcomingLegSessions().forEach(sess=>{
+    (DATA.runSchedule||[]).forEach(r=>{
+      const b = runBuffer(r);
+      if(b>=0 && Math.abs(daysBetween(sess.date, r.date))<=b) out.push({ session:sess, run:r });
+    });
+  });
+  return out;
+}
+function legClearOn(date, runs){ return runs.every(r=>{ const b = runBuffer(r); return b<0 || Math.abs(daysBetween(date, r.date))>b; }); }
+function weekDatesOf(dateStr){
+  const start = new Date(weekStartOf(dateStr)+'T00:00:00');
+  return [0,1,2,3,4,5,6].map(i=>{ const d = new Date(start); d.setDate(start.getDate()+i); return fmtLocalDate(d); });
+}
+/** Nearest clash-free day in the same week for a lifting session (no other session that day). */
+function freeDayForSession(sess){
+  const today = todayLocal();
+  return weekDatesOf(sess.date)
+    .filter(d=>d>=today && d!==sess.date && !DATA.sessions.some(x=>x.id!==sess.id && x.date===d) && legClearOn(d, DATA.runSchedule||[]))
+    .sort((a,b)=>Math.abs(daysBetween(a, sess.date))-Math.abs(daysBetween(b, sess.date)))[0] || null;
+}
+/** Nearest day in the same week the run could go that clears every upcoming leg session. */
+function freeDayForRun(run){
+  const today = todayLocal();
+  const others = (DATA.runSchedule||[]).filter(r=>r!==run);
+  const legs = upcomingLegSessions();
+  const b = runBuffer(run);
+  return weekDatesOf(run.date)
+    .filter(d=>d>=today && d!==run.date && !others.some(r=>r.date===d) && legs.every(x=>Math.abs(daysBetween(x.date, d))>b))
+    .sort((a,b2)=>Math.abs(daysBetween(a, run.date))-Math.abs(daysBetween(b2, run.date)))[0] || null;
+}
+const fmtDay = (d)=>new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'short'});
+/** Asks once what to do about a clash. Resolves true if anything was moved. */
+async function offerClashFix(clash){
+  const { session:sess, run } = clash;
+  const rt = RUN_TYPES[run.type];
+  const diff = daysBetween(sess.date, run.date);
+  const when = diff===0 ? 'on the same day as' : diff===1 ? 'the day after' : diff===-1 ? 'the day before' : (Math.abs(diff)+' days from');
+  const liftDay = freeDayForSession(sess), runDay = freeDayForRun(run);
+  const options = [];
+  if(liftDay) options.push({ key:'lift', label:`Move the ${CATS[sess.cat].label.toLowerCase()} session to ${fmtDay(liftDay)}`, hint:'Your runs stay as they are', primary:true });
+  if(runDay) options.push({ key:'run', label:`Move the ${rt.label.toLowerCase()} to ${fmtDay(runDay)}`, hint:'Only if your running plan allows it', primary:!liftDay });
+  options.push({ key:'keep', label:'Keep both where they are', hint:'You could go lighter on the leg work that day' });
+  const msg = `Your ${CATS[sess.cat].label.toLowerCase()} session on ${fmtDay(sess.date)} is ${when} your ${rt.label.toLowerCase()}${run.label?` (${run.label})`:''}. Heavy leg work and hard runs are best kept apart.`
+    + (!liftDay && !runDay ? '\n\nThere’s no clash-free day left in that week for either of them.' : '');
+  const pick = await chooseDialog('Leg day clash', msg, options);
+  if(pick==='lift'){
+    const from = sess.date;
+    moveSessionDate(sess.id, liftDay); render();
+    showToast(`Moved to ${fmtDay(liftDay)}.`, ()=>{ moveSessionDate(sess.id, from); render(); });
+    return true;
+  }
+  if(pick==='run'){
+    const restore = moveRunDate(run.date, runDay, 'replace'); render();
+    if(restore) showToast(`${rt.label} moved to ${fmtDay(runDay)} — remember to move it in your running app too.`, ()=>{ restore(); });
+    return true;
+  }
+  if(pick==='keep'){
+    // you've decided; don't keep asking about this pairing
+    (sess.clashOk = sess.clashOk || []).push(clashKey(clash));
+    scheduleSave(); render();
+  }
+  return false;
+}
+function clashKey(c){ return c.session.date+'|'+c.run.date+'|'+c.run.type; }
+function isAcceptedClash(c){ return (c.session.clashOk||[]).includes(clashKey(c)); }
+/** After a run or session changes: offer a fix for each new clash, one at a time. */
+async function checkClashes(filter){
+  const asked = new Set();
+  for(let guard=0; guard<6; guard++){
+    const clash = findClashes().find(c=>(!filter || filter(c)) && !isAcceptedClash(c) && !asked.has(c.session.id+'|'+c.run.date));
+    if(!clash) return;
+    asked.add(clash.session.id+'|'+clash.run.date);
+    await offerClashFix(clash);
+  }
+}
 function moveRunDate(fromDate, toDate, mode){
   const runs = DATA.runSchedule || [];
   const run = runs.find(r=>r.date===fromDate);
@@ -4393,6 +4500,7 @@ function openMoveRunModal(fromDate, onMoved){
         : 'Run moved to '+new Date(toDate+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})+'.';
       showToast(msg, ()=>{ restore(); if(onMoved) onMoved(fromDate); });
       if(onMoved) onMoved(toDate); else render();
+      setTimeout(()=>checkClashes(c=>c.run.date===toDate), 50);
     }
   });
 }
@@ -4427,6 +4535,7 @@ function openAddRunModal(defaultDate, onSaved){
     DATA.runSchedule = Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
     scheduleSave(); closeModal();
     if(onSaved) onSaved(date); else render();
+    if(type!=='rest') setTimeout(()=>checkClashes(c=>c.run.date===date), 50);
   });
 }
 
