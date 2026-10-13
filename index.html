@@ -655,6 +655,7 @@ function guessMuscles(name){
 function formatWeight(w){
   if(!w) return 'BW';
   if(w.type==='kg') return w.value+'kg';
+  if(w.type==='assist') return '−'+w.value+'kg';
   if(w.type==='bw') return 'BW';
   if(w.type==='bar') return 'Bar';
   return 'BW';
@@ -668,7 +669,8 @@ function hasRepNumber(p){
   const stripped = (p||'')
     .replace(/@\s*\d+(?:\.\d+)?/g,' ')
     .replace(/\bRIR\s*\d+(?:\.\d+)?\b/ig,' ')
-    .replace(/(\d+(?:\.\d+)?)\s*kg/ig,' ')
+    .replace(/[-−–]?\s*(\d+(?:\.\d+)?)\s*kg/ig,' ')
+    .replace(/assist(?:ed|ance)?/ig,' ')
     .replace(/bodyweight|\bbw\b/ig,' ')
     .replace(/\bbar(\s+only)?\b/ig,' ');
   return /\d/.test(stripped);
@@ -725,8 +727,13 @@ function parseSetsFromText(text){
     if(rirAtMatch){ rir = parseFloat(rirAtMatch[1]); p = p.replace(rirAtMatch[0],' '); }
     else if(rirWordMatch){ rir = parseFloat(rirWordMatch[1]); p = p.replace(rirWordMatch[0],' '); }
     let weight = null;
-    const kgMatch = p.match(/(\d+(?:\.\d+)?)\s*kg/i);
-    if(kgMatch){ weight = {type:'kg', value:parseFloat(kgMatch[1])}; ctxWeight = weight; p = p.replace(kgMatch[0],' '); }
+    // assisted (machine or band help): "−9kg", "-9kg", "9kg assist(ance)", "assisted 9kg"
+    const assistMatch = p.match(/[-−–]\s*(\d+(?:\.\d+)?)\s*kg/i)
+      || p.match(/(\d+(?:\.\d+)?)\s*kg\s*(?:of\s*)?assist(?:ed|ance)?/i)
+      || p.match(/assist(?:ed|ance)?\s*(?:of\s*)?(\d+(?:\.\d+)?)\s*kg/i);
+    const kgMatch = assistMatch ? null : p.match(/(\d+(?:\.\d+)?)\s*kg/i);
+    if(assistMatch){ weight = {type:'assist', value:parseFloat(assistMatch[1])}; ctxWeight = weight; p = p.replace(assistMatch[0],' ').replace(/assist(?:ed|ance)?/ig,' '); }
+    else if(kgMatch){ weight = {type:'kg', value:parseFloat(kgMatch[1])}; ctxWeight = weight; p = p.replace(kgMatch[0],' '); }
     else if(/bodyweight|\bbw\b/i.test(p)){ weight = {type:'bw'}; ctxWeight = weight; p = p.replace(/bodyweight|\bbw\b/i,' '); }
     else if(/\bbar\b/i.test(p)){ weight = {type:'bar'}; ctxWeight = weight; p = p.replace(/\bbar(\s+only)?\b/i,' '); }
     else { weight = ctxWeight; }
@@ -4841,6 +4848,17 @@ function decideProgression(ex, analysis){
     const sets = analysis.workSets.map(clean);
     const idx = sets.map((s,i)=>i);
     const min = Math.min(...sets.map(s=>s.reps));
+    if(min >= high && sets.some(s=>s.weight && s.weight.type==='assist')){
+      // assisted work at the top of the range: take some help away, back to the bottom of the range
+      const cur = Math.min(...sets.filter(s=>s.weight && s.weight.type==='assist').map(s=>s.weight.value));
+      const less = Math.max(0, cur - (cur>10 ? 2.5 : 1));
+      sets.forEach(s=>{ if(s.weight && s.weight.type==='assist'){ s.weight = less ? {type:'assist', value:less} : {type:'bw'}; s.reps = low; } });
+      return {
+        action:'weight', sets,
+        why: `every set hit ${high} with ${cur}kg of help, so ${less ? 'down to '+less+'kg assistance' : 'try it unassisted'}`,
+        hint: `${low}–${high} rep range · less assistance each time you top the range`,
+      };
+    }
     if(min >= high){
       return {
         action:'hold', sets,
@@ -5855,7 +5873,10 @@ function openWorkoutMode(sessionId){
   // circle as each set's done; ✓ Done logs everything left in one go.
   const setRowHTML = (ex, s, i, n, src)=>{
     const loaded = s.weight && s.weight.type==='kg';
-    const w = loaded
+    const assisted = s.weight && s.weight.type==='assist';
+    const w = assisted
+      ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'More assistance')}<button type="button" class="set-val" data-edit-val="w" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the assistance">−${s.weight.value}<small>kg</small></button>${stepBtn(src,ex.id,i,'w',1,'Less assistance')}</div>`
+      : loaded
       ? `<div class="stepper">${stepBtn(src,ex.id,i,'w',-1,'Less weight')}<button type="button" class="set-val ${s.weight.value?'':'unset'} ${String(s.weight.value).length>=4?'long':''}" data-edit-val="w" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the weight">${s.weight.value}<small>kg</small></button>${stepBtn(src,ex.id,i,'w',1,'More weight')}</div>`
       : `<div class="stepper static"><span class="set-val">${formatWeight(s.weight)}</span></div>`;
     const r = `<div class="stepper">${stepBtn(src,ex.id,i,'r',-1,'Fewer')}<button type="button" class="set-val" data-edit-val="r" data-src="${src}" data-ex="${ex.id}" data-i="${i}" aria-label="Type the ${s.isSeconds?'seconds':'reps'}">${s.isSeconds ? `${s.reps}<small>s</small>` : `<small>×</small>${s.reps}`}${s.perSide?'<small> ea</small>':''}</button>${stepBtn(src,ex.id,i,'r',1,'More')}</div>`;
@@ -6054,7 +6075,13 @@ function openWorkoutMode(sessionId){
       const sets = arrFor(d.src, d.ex);
       const i = +d.i, dir = +d.dir, st = sets[i];
       if(!st) return;
-      if(d.step==='w'){
+      if(d.step==='w' && st.weight && st.weight.type==='assist'){
+        // assistance: + takes help away (harder), down to plain bodyweight
+        const old = st.weight.value, nv = Math.max(0, old - dir);
+        const next = nv ? {type:'assist', value:nv} : {type:'bw'};
+        st.weight = next;
+        for(let j=i+1; j<sets.length && sets[j].weight && sets[j].weight.type==='assist' && sets[j].weight.value===old; j++) sets[j].weight = Object.assign({}, next);
+      } else if(d.step==='w'){
         const old = st.weight.value;
         const base = dir>0 ? old : old-0.001;
         const step = base < 10 ? 0.5 : base < 20 ? 1 : 2.5;
@@ -6088,7 +6115,7 @@ function openWorkoutMode(sessionId){
       const input = document.createElement('input');
       input.type = 'number'; input.inputMode = isW ? 'decimal' : 'numeric'; input.step = isW ? '0.5' : '1'; input.min = '0';
       input.className = 'set-val-input';
-      input.value = isW ? st.weight.value : st.reps;
+      input.value = isW ? st.weight.value : st.reps; // assistance is typed as the amount of help
       b.replaceWith(input);
       input.focus(); input.select();
       let done = false;
@@ -6096,7 +6123,9 @@ function openWorkoutMode(sessionId){
         if(done) return; done = true;
         const v = parseFloat(input.value);
         if(!isNaN(v) && v>=0){
-          if(isW){
+          if(isW && st.weight && st.weight.type==='assist'){
+            st.weight = v>0 ? {type:'assist', value:Math.round(v*100)/100} : {type:'bw'};
+          } else if(isW){
             const old = st.weight.value, nv = Math.round(v*100)/100;
             st.weight = {type:'kg', value:nv};
             // later sets at the old weight follow, same as the − / + buttons
@@ -6826,6 +6855,7 @@ function parseSessionPasteText(text){
   const parsed = [];
   const unparsed = [];
   let current = null;
+  let groupAssist = null; // "Assisted pull-up/dip superset (−9kg assistance):" → applies below
 
   const pushSets = (setsText, lineNo, line)=>{
     const sets = parseSetsFromText(setsText);
@@ -6845,9 +6875,16 @@ function parseSessionPasteText(text){
       const after = line.slice(idx+1).trim();
       // "15kg: 12ea, 12ea" — the bit before the colon is a weight, not an exercise
       if(before && !looksLikeSetData(before)){
-        current = { name: canonicalExerciseName(before), sets: [] };
+        // nothing after the colon: maybe a group heading ("Superset:", "Assisted
+        // pull-up/dip superset (−9kg assistance):") rather than an exercise
+        if(!after){
+          const a = parseSetsFromText('1 '+before.replace(/.*?([-−–]\s*\d+(?:\.\d+)?\s*kg|\d+(?:\.\d+)?\s*kg\s*assist\w*|assist\w*\s*\d+(?:\.\d+)?\s*kg).*/i, '$1'));
+          groupAssist = (a.length && a[0].weight && a[0].weight.type==='assist') ? a[0].weight : groupAssist;
+        }
+        current = { name: canonicalExerciseName(before), sets: [], heading: !after };
         parsed.push(current);
         if(after) pushSets(after, lineNo, line);
+        if(groupAssist && current.sets.length) current.sets.forEach(st=>{ if(!st.weight || st.weight.type==='bw') st.weight = Object.assign({}, groupAssist); });
         return;
       }
       // weight prefix applies to the sets that follow it on the same line
@@ -6862,10 +6899,12 @@ function parseSessionPasteText(text){
     parsed.push(current);
   });
 
-  // headings that never got any sets aren't real entries
-  const complete = parsed.filter(pEntry=>{
+  // headings that never got any sets aren't real entries — fine if they were a
+  // label over the exercises that follow, worth flagging if they were the last line
+  const complete = parsed.filter((pEntry, i)=>{
     if(pEntry.sets.length) return true;
-    unparsed.push({line:null, text:pEntry.name+' (no sets found)'});
+    const labelsOthers = parsed.slice(i+1).some(x=>x.sets.length);
+    if(!labelsOthers) unparsed.push({line:null, text:pEntry.name+' (no sets found)'});
     return false;
   });
   return { parsed: complete, unparsed };
