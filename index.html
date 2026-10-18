@@ -321,7 +321,12 @@
   /* tap-to-log sets */
   .set-list{ margin:10px 0 4px; }
   .set-row{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
-  .set-n{ width:14px; flex:none; color:var(--text-faint); font-family:'IBM Plex Mono',monospace; font-size:12px; text-align:center; }
+  .set-n{ width:20px; height:44px; flex:none; padding:0; background:none; border:none; color:var(--text-faint); font-family:'IBM Plex Mono',monospace; font-size:12px; text-align:center; cursor:pointer; touch-action:manipulation; }
+  .set-del-confirm{ display:none; flex:none; height:44px; padding:0 12px; border:none; border-radius:8px; background:#C0392B; color:#fff; font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.08em; cursor:pointer; }
+  .set-row.confirm-del .set-tick{ display:none; }
+  .set-row.confirm-del .set-del-confirm{ display:block; animation:delIn .15s ease; }
+  .set-row.confirm-del .set-n{ color:#C0392B; }
+  @keyframes delIn{ from{ opacity:0; transform:translateX(12px); } to{ opacity:1; transform:none; } }
   .set-tick{ flex:none; width:44px; height:44px; border-radius:50%; border:2px solid var(--border); background:none; color:var(--text-faint); font-size:19px; font-weight:700; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; transition:background .15s ease, border-color .15s ease, color .15s ease; }
   .set-tick:active{ border-color:#4CAF50; color:#4CAF50; }
   .set-tick.on{ border-color:#4CAF50; background:#4CAF50; color:#fff; }
@@ -5884,7 +5889,9 @@ function openWorkoutMode(sessionId){
     const tick = src==='log'
       ? `<button type="button" class="set-tick on" data-untick="${ex.id}" data-i="${i}" aria-label="Set ${n} done — tap to undo">✓</button>`
       : `<button type="button" class="set-tick" data-tick="${ex.id}" data-i="${i}" aria-label="Tick set ${n} done">✓</button>`;
-    return `<div class="set-row ${src==='log'?'is-done':''}"><span class="set-n">${n}</span>${w}${r}${tick}</div>`;
+    // swipe the row left, or tap its number, to reveal Delete in place of the tick
+    const del = `<button type="button" class="set-del-confirm" data-del-set="${ex.id}" data-src="${src}" data-i="${i}" aria-label="Delete set ${n}">Delete</button>`;
+    return `<div class="set-row ${src==='log'?'is-done':''}" data-set-row><button type="button" class="set-n" data-set-menu aria-label="Set ${n} options">${n}</button>${w}${r}${tick}${del}</div>`;
   };
 
   const rowHTML = (e, i)=>{
@@ -6021,6 +6028,7 @@ function openWorkoutMode(sessionId){
 
   overlay.addEventListener('click', async (e)=>{
     const b = e.target.closest('button, a');
+    if(!b || !b.matches('[data-set-menu], .set-del-confirm')) overlay.querySelectorAll('.set-row.confirm-del').forEach(r=>r.classList.remove('confirm-del'));
     if(!b || !overlay.contains(b) || b.disabled) return;
     const d = b.dataset;
 
@@ -6209,15 +6217,37 @@ function openWorkoutMode(sessionId){
       refreshRow(d.dropSet);
       return;
     }
+    if(d.setMenu!==undefined){
+      const row = b.closest('[data-set-row]');
+      const open = row.classList.contains('confirm-del');
+      overlay.querySelectorAll('.set-row.confirm-del').forEach(r=>r.classList.remove('confirm-del'));
+      if(!open) row.classList.add('confirm-del');
+      return;
+    }
     if(d.delSet){
-      const sets = arrFor(d.src, d.delSet);
-      sets.splice(+d.i, 1);
-      if(d.src==='log'){
-        if(!sets.length) delete DATA.cells[keyOf(d.delSet)];
-        savedEdit(d.delSet, true);
+      const exId = d.delSet, src = d.src, i = +d.i;
+      const sets = arrFor(src, exId);
+      const [removed] = sets.splice(i, 1);
+      if(!removed) return;
+      if(src==='log'){
+        if(!sets.length) delete DATA.cells[keyOf(exId)];
+        savedEdit(exId, true);
       }
       saveDrafts();
-      refreshRow(d.delSet);
+      refreshRow(exId);
+      showToast('Set deleted.', ()=>{
+        // put it back exactly where it was
+        if(src==='log'){
+          const cur = DATA.cells[keyOf(exId)] || (DATA.cells[keyOf(exId)] = []);
+          cur.splice(Math.min(i, cur.length), 0, removed);
+          savedEdit(exId, false);
+        } else {
+          const cur = draftFor(exById(exId));
+          cur.splice(Math.min(i, cur.length), 0, removed);
+        }
+        saveDrafts();
+        if(document.body.contains(overlay)) refreshRow(exId);
+      });
       return;
     }
     if(d.type){
@@ -6316,6 +6346,21 @@ function openWorkoutMode(sessionId){
       showWorkoutSummary(session, pool, priorSessions, prsThisWorkout);
     }
   });
+  let swipe = null;
+  overlay.addEventListener('touchstart', (e)=>{
+    const row = e.target.closest('[data-set-row]');
+    swipe = row && e.touches.length===1 ? { row, x:e.touches[0].clientX, y:e.touches[0].clientY } : null;
+  }, {passive:true});
+  overlay.addEventListener('touchend', (e)=>{
+    if(!swipe) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+    if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)*1.5){
+      overlay.querySelectorAll('.set-row.confirm-del').forEach(r=>{ if(r!==swipe.row) r.classList.remove('confirm-del'); });
+      swipe.row.classList.toggle('confirm-del', dx < 0);
+    }
+    swipe = null;
+  }, {passive:true});
   overlay.addEventListener('focusout', (e)=>{
     if(e.target.matches && e.target.matches('[data-workout-ex]')) commitText(e.target);
   });
