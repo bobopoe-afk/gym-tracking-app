@@ -792,8 +792,16 @@ function machineForNewSets(key){
   return isGymSpecific(ex) ? gymForSession(key.slice(i+1)) : '';
 }
 function cellText(key){ const s = DATA.cells[key]; return (s && s.length) ? setsToText(s) : ''; }
+/** On an assisted exercise ("Assisted pull-up (machine)") a plain "9kg" is the
+ *  help you had, not weight lifted — otherwise less help reads as going backwards
+ *  and 9kg shows up as a weight PR. */
+function isAssistedExercise(exId){ const e = DATA.exercises.find(x=>x.id===exId); return !!e && /assist/i.test(e.name); }
+function assistify(exId, sets){
+  if(sets && isAssistedExercise(exId)) sets.forEach(st=>{ if(st.weight && st.weight.type==='kg') st.weight = st.weight.value>0 ? {type:'assist', value:st.weight.value} : {type:'bw'}; });
+  return sets;
+}
 function setCellFromText(key, text){
-  const sets = parseSetsFromText(text);
+  const sets = assistify(key.slice(0, key.indexOf('|')), parseSetsFromText(text));
   if(sets.length){ DATA.cells[key] = tagSets(sets, machineForNewSets(key)); } else { delete DATA.cells[key]; }
   return sets;
 }
@@ -1276,6 +1284,11 @@ function migrateData(){
   });
   if(!Array.isArray(DATA.templates)){ DATA.templates = []; changed = true; }
   if(!Array.isArray(DATA.machines)){ DATA.machines = []; changed = true; }
+  DATA.exercises.filter(e=>/assist/i.test(e.name)).forEach(e=>{
+    const fix = (sets)=>{ (sets||[]).forEach(st=>{ if(st.weight && st.weight.type==='kg'){ st.weight = st.weight.value>0 ? {type:'assist', value:st.weight.value} : {type:'bw'}; changed = true; } }); };
+    Object.keys(DATA.cells).forEach(k=>{ if(k.startsWith(e.id+'|')) fix(DATA.cells[k]); });
+    DATA.sessions.forEach(x=>{ if(x.targets && x.targets[e.id]) fix(x.targets[e.id]); });
+  });
   {
     const norm = (n)=>(n||'').toLowerCase().replace(/[^a-z0-9]/g,'');
     const haveIds = new Set(DATA.exercises.map(e=>e.id)), haveNames = new Set(DATA.exercises.map(e=>norm(e.name)));
@@ -3370,7 +3383,7 @@ function openEditEntryModal(sessionId, exId){
     const newExId = m.querySelector('#fEntryEx').value;
     const gymSel = m.querySelector('#fEntryMachine');
     const machineId = gymSel ? gymSel.value : currentMachine;
-    const sets = tagSets(parseSetsFromText(m.querySelector('#fEntrySets').value.trim()), machineId);
+    const sets = tagSets(assistify(newExId, parseSetsFromText(m.querySelector('#fEntrySets').value.trim())), machineId);
     const prevOld = DATA.cells[exId+'|'+sessionId];
     const prevNew = DATA.cells[newExId+'|'+sessionId];
     if(!sets.length){ showToast("Couldn't read those sets — leaving the entry as it was."); return; }
@@ -6041,7 +6054,7 @@ function openWorkoutMode(sessionId){
       if(next) next.scrollIntoView({behavior:'smooth', block:'start'});
     };
     const logSets = (ex, sets)=>{
-      DATA.cells[keyOf(ex.id)] = loggedFor(ex.id).concat(tagSets(sets.map(cloneSet), gymFor(ex)));
+      DATA.cells[keyOf(ex.id)] = loggedFor(ex.id).concat(tagSets(assistify(ex.id, sets.map(cloneSet)), gymFor(ex)));
       scheduleSave(); updateStatRow();
       const prs = checkForPR(ex.id, ex.name, sessionId, announcedPRs);
       prsThisWorkout += prs;
@@ -7085,7 +7098,7 @@ Chest supported row:
         cat = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
       }
       DATA.sessions.push({id, date:dateVal, label, cat, targets:{}});
-      resolved.forEach(r=>{ DATA.cells[r.ex.id+'|'+id] = tagSets(r.sets, machineForNewSets(r.ex.id+'|'+id)); });
+      resolved.forEach(r=>{ DATA.cells[r.ex.id+'|'+id] = tagSets(assistify(r.ex.id, r.sets), machineForNewSets(r.ex.id+'|'+id)); });
       resolved.forEach(r=>checkForPR(r.ex.id, r.ex.name, id));
       resolved.forEach(r=>warnIfOddReps(r.ex.id, id));
       scheduleSave();
