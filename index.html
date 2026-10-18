@@ -2418,7 +2418,12 @@ function openManageGymsModal(onDone){
     wrap.querySelector('#cDone').addEventListener('click', finish);
     wrap.querySelector('#cAdd').addEventListener('click', async ()=>{
       const name = await promptGymName('Add a gym', '');
-      if(name){ addGym(name); draw(); }
+      if(!name) return;
+      // adding one here is bookkeeping, not "I'm there now" — only the first becomes current
+      const was = currentGym();
+      addGym(name);
+      if(was) DATA.currentGym = was;
+      draw();
     });
     wrap.querySelectorAll('[data-rename]').forEach(b=>b.addEventListener('click', async ()=>{
       const m = machineById(b.dataset.rename);
