@@ -5927,6 +5927,10 @@ function openWorkoutMode(sessionId){
   // parsed sets can share one weight object between them, so copies get their own
   const cloneSet = (s)=>Object.assign({}, s, { weight: s.weight ? Object.assign({}, s.weight) : s.weight });
 
+  const isRecord = !!session.finished || session.date < todayLocal();
+  // drafts kept from opening it before this was fixed would bring the phantom sets back
+  if(isRecord) Object.keys(drafts).forEach(id=>{ if(cellSets(keyOf(id)).length) delete drafts[id]; });
+
   // a session with machine work already logged stays pinned to the gym it happened at
   if(!machineById(session.gym)){
     const loggedGym = DATA.exercises.map(e=>machineOfCell(keyOf(e.id))).find(Boolean);
@@ -5966,6 +5970,10 @@ function openWorkoutMode(sessionId){
   const stripForDraft = (s)=>{ const c = cloneSet(s); c.rir = null; delete c.machine; return c; };
   const draftFor = (ex)=>{
     if(drafts[ex.id]) return drafts[ex.id];
+    // a finished (or past) workout is a record: what's logged is what was done. Planned
+    // sets that never got logged — skipped warm-ups, a set dropped on the day — aren't
+    // still to do. "+ Set" still adds one if something was forgotten.
+    if(isRecord && cellSets(keyOf(ex.id)).length) return (drafts[ex.id] = []);
     let sets = targetSets(session, ex.id);
     if(!sets.length) sets = parseSetsFromText(deterministicSuggestionFor(ex.id, priorSessions, gymFor(ex)).suggestion);
     if(!sets.length){
