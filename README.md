@@ -80,6 +80,9 @@ Search for these to jump around:
   as `machine` (from `DATA.machines`), and suggestions, PRs
   (`prKey(exId, gymId)`), charts and 1RM estimates only compare
   machine/cable entries from the same gym. Free weights are never tagged.
+  The Gyms pop-up (footer, or "edit" on the chips) also lists past sessions
+  with machine/cable work so they can be put at a gym after the fact
+  (`setPastSessionGym`), one by one or all the unset ones at once.
 - `function sessionStatus` — planned / in-progress / completed / missed,
   computed per-exercise rather than as a single flag (this matters: a
   session with 1 of 5 exercises logged is "in-progress," not "completed")
@@ -119,7 +122,8 @@ Worth knowing so you don't rediscover these the hard way:
   sets at the same weight). Typing is still available behind "Type".
 - Machine and cable weights are tracked per gym: pick the gym once at the
   top of a workout (remembered). History from before gyms existed stays
-  untagged and is used as a labelled fallback until a gym has its own.
+  untagged and is used as a labelled fallback until a gym has its own —
+  or put old sessions at the right gym from Gyms in the footer.
 - Pop-ups don't auto-focus fields on touch screens and the page behind
   them is scroll-locked — both caused the page to jump on phones.
 - PR records are a derived cache: rebuilt from `DATA.cells` on load and on

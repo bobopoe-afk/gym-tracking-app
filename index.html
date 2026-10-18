@@ -318,6 +318,14 @@
   .gym-chips{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:-8px 0 18px; font-size:12px; color:var(--text-dim); }
   .chip{ border:1px solid var(--border); background:var(--surface); color:var(--text); padding:8px 13px; border-radius:999px; font-family:inherit; font-size:13px; cursor:pointer; touch-action:manipulation; }
   .chip.on{ border-color:var(--accent); background:var(--accent-dim); font-weight:600; }
+  .stacked-modal ~ .toast{ z-index:450; }
+  .gym-hist-h{ font-size:14px; margin:22px 0 4px; }
+  .gym-hist-row{ padding:10px 0; border-bottom:1px solid var(--border); }
+  .gym-hist-row:last-of-type{ border-bottom:none; }
+  .gym-hist-what{ font-size:13px; margin-bottom:8px; }
+  .gym-hist-what small{ display:block; color:var(--text-dim); font-size:11.5px; margin-top:2px; }
+  .gym-hist-row .gym-chips, .gym-bulk{ margin:0; }
+  .gym-bulk{ margin:8px 0 6px; }
   /* tap-to-log sets */
   .set-list{ margin:10px 0 4px; }
   .set-row{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
@@ -461,6 +469,7 @@
     <span id="storageNote">Saved in this browser.</span>
     <a id="splitLink">Training split</a> ·
     <a id="coachLink">Coaching preferences</a> ·
+    <a id="gymsLink">Gyms</a> ·
     <a id="trashLink">Recently deleted</a> ·
     <a id="resetLink">Reset to sample data</a> ·
     <a id="exportLink">Export data</a> ·
@@ -792,7 +801,7 @@ function machineForNewSets(key){
   return isGymSpecific(ex) ? gymForSession(key.slice(i+1)) : '';
 }
 function cellText(key){ const s = DATA.cells[key]; return (s && s.length) ? setsToText(s) : ''; }
-/** On an assisted exercise ("Assisted pull-up (machine)") a plain "9kg" is the
+/** On an assisted exercise ("Assisted dip machine") a plain "9kg" is the
  *  help you had, not weight lifted — otherwise less help reads as going backwards
  *  and 9kg shows up as a weight PR. */
 function isAssistedExercise(exId){ const e = DATA.exercises.find(x=>x.id===exId); return !!e && /assist/i.test(e.name); }
@@ -1235,7 +1244,7 @@ const LIBRARY_ADDITIONS = [
   ['overhead-press','Barbell overhead press','push'], ['push-up','Push-up','push'], ['dumbbell-bench-press','Dumbbell bench press','push'],
   ['cable-fly','Cable fly','push'], ['overhead-triceps-extension','Overhead cable triceps extension','push'],
   ['skull-crusher','EZ-bar skull crusher','push'], ['close-grip-bench','Close-grip bench press','push'],
-  ['pull-up','Pull-up','pull'], ['chin-up','Chin-up','pull'], ['assisted-pull-up','Assisted pull-up (machine)','pull'],
+  ['pull-up','Pull-up','pull'], ['chin-up','Chin-up','pull'],
   ['one-arm-db-row','One-arm dumbbell row','pull'], ['seated-cable-row','Seated cable row (close grip)','pull'],
   ['ez-bar-curl','EZ-bar curl','pull'], ['cable-curl','Cable curl','pull'], ['reverse-pec-deck','Reverse pec deck','pull'],
   ['hanging-knee-raise','Hanging knee raise','aux'], ['dead-bug','Dead bug','aux'], ['farmers-carry',"Farmer's carry",'aux'],
@@ -1259,8 +1268,10 @@ const NAME_FIXUPS = {
 };
 
 /** Near-duplicate rows that describe the same movement. Data from the source id is
- *  folded into the target id, then the duplicate row is removed. */
-const DUPLICATE_MERGES = { 'hip-abductor-machine':'hip-abductor', 'cable-triceps-pressdown':'triceps-pushdown' };
+ *  folded into the target id, then the duplicate row is removed. Pull-ups take
+ *  assistance (−9kg) directly, so the separate assisted row is one movement with it:
+ *  going from assisted to bodyweight to weighted is one line of progress. */
+const DUPLICATE_MERGES = { 'hip-abductor-machine':'hip-abductor', 'cable-triceps-pressdown':'triceps-pushdown', 'assisted-pull-up':'pull-up' };
 function migrateData(){
   let changed = false;
   if(!Array.isArray(DATA.runSchedule)){ DATA.runSchedule = []; changed = true; }
@@ -1315,7 +1326,13 @@ function migrateData(){
         if(!sess.targets[toId]) sess.targets[toId] = sess.targets[fromId];
         delete sess.targets[fromId];
       }
-      ['order','excluded'].forEach(k=>{ if(Array.isArray(sess[k])) sess[k] = [...new Set(sess[k].map(id=>id===fromId?toId:id))]; });
+      if(Array.isArray(sess.order)) sess.order = [...new Set(sess.order.map(id=>id===fromId?toId:id))];
+      if(Array.isArray(sess.excluded)){
+        // swapping one for the other in a session left one of them excluded; the one
+        // that was actually done (or kept in the plan) wins
+        const used = (sess.order||[]).includes(toId) || !!(sess.targets && sess.targets[toId]) || cellSets(toId+'|'+sess.id).length>0;
+        sess.excluded = [...new Set(sess.excluded.map(id=>id===fromId?toId:id))].filter(id=>!(used && id===toId));
+      }
     });
     // keep settings made on either one
     ['priority','equipment','repRangeLow','repRangeHigh'].forEach(k=>{ if(from[k]!=null && to[k]==null) to[k] = from[k]; });
@@ -2331,13 +2348,51 @@ function promptGymName(title, initial){
     setTimeout(()=>{ input.focus({preventScroll:true}); input.select(); }, 20);
   });
 }
+/** The gym a past session's machine/cable work is tagged with ('' when none). */
+function sessionGymTag(sess){
+  if(machineById(sess.gym)) return sess.gym;
+  const key = DATA.exercises.filter(isGymSpecific).map(ex=>ex.id+'|'+sess.id).find(k=>machineOfCell(k));
+  return key ? machineOfCell(key) : '';
+}
+/** Puts a session at a gym (or none), taking its machine/cable entries with it.
+ *  Unlike picking a gym in a workout, this doesn't change where you are now. */
+function setPastSessionGym(sess, gymId){
+  if(gymId) sess.gym = gymId; else delete sess.gym;
+  DATA.exercises.filter(isGymSpecific).forEach(ex=>{
+    const c = DATA.cells[ex.id+'|'+sess.id];
+    if(c && c.length) tagSets(c, gymId);
+  });
+}
+/** Sessions with machine or cable work logged — the only ones a gym matters for —
+ *  newest first, each with a few of its machine numbers to jog the memory. */
+function sessionsWithMachineWork(){
+  const gymEx = DATA.exercises.filter(isGymSpecific);
+  return DATA.sessions.filter(sessionHasActual).map(sess=>{
+    const order = sess.order||[];
+    const rank = (id)=>{ const i = order.indexOf(id); return i<0 ? 1e9 : i; };
+    const work = gymEx.filter(ex=>cellSets(ex.id+'|'+sess.id).length).sort((a,b)=>rank(a.id)-rank(b.id)).map(ex=>{
+      const kg = cellSets(ex.id+'|'+sess.id).filter(st=>st.weight && st.weight.type==='kg').map(st=>st.weight.value);
+      return kg.length ? ex.name+' '+Math.max(...kg)+'kg' : ex.name;
+    });
+    return { sess, work };
+  }).filter(x=>x.work.length).sort((a,b)=>b.sess.date.localeCompare(a.sess.date));
+}
 function openManageGymsModal(onDone){
   const wrap = document.createElement('div');
-  wrap.className = 'modal-backdrop';
+  wrap.className = 'modal-backdrop stacked-modal';
   wrap.style.zIndex = 400;
-  const finish = ()=>{ wrap.remove(); render(); if(onDone) onDone(); };
+  let retagged = false;
+  const finish = ()=>{
+    wrap.remove();
+    if(retagged){ rebuildPRRecordsFromHistory(); scheduleSave(); }
+    render(); if(onDone) onDone();
+  };
+  const fmt = (d)=>new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});
   const draw = ()=>{
     const list = DATA.machines||[];
+    const hist = list.length ? sessionsWithMachineWork() : [];
+    const unset = hist.filter(x=>!sessionGymTag(x.sess));
+    const scroll = wrap.querySelector('.modal') ? wrap.querySelector('.modal').scrollTop : 0;
     wrap.innerHTML = `<div class="modal" style="max-width:480px;">
       <h2>Your gyms</h2>
       <p class="modal-sub">Machine and cable weights are only compared within the same gym.</p>
@@ -2346,13 +2401,47 @@ function openManageGymsModal(onDone){
         <button class="btn ghost" data-rename="${m.id}">Rename</button>
         <button class="btn ghost" data-remove="${m.id}">Remove</button>
       </div>`).join('')}
+      <button class="btn ghost" id="cAdd" style="margin-top:10px;">+ Add gym</button>
+      ${hist.length ? `<h3 class="gym-hist-h">Where was each session?</h3>
+        <p class="modal-sub">Tap the gym for the sessions you remember. Free weights count the same everywhere, so only machine and cable work is listed.</p>
+        ${unset.length ? `<div class="gym-chips gym-bulk"><span>All ${unset.length} not set yet:</span>${gymChipsHTML('', 'data-bulk-gym')}</div>` : ''}
+        ${hist.map(({sess, work})=>{
+          const at = sessionGymTag(sess);
+          return `<div class="gym-hist-row">
+            <div class="gym-hist-what"><b>${fmt(sess.date)}</b> · ${escapeHtml(CATS[sess.cat] ? CATS[sess.cat].label : '')}<small>${escapeHtml(work.slice(0,3).join(' · ')+(work.length>3?' +'+(work.length-3):''))}</small></div>
+            <div class="gym-chips">${list.map(m=>`<button type="button" class="chip ${m.id===at?'on':''}" data-sess-gym="${sess.id}" data-to="${m.id}">${escapeHtml(m.name)}</button>`).join('')}</div>
+          </div>`;
+        }).join('')}` : ''}
       <div class="modal-actions"><button class="btn primary" id="cDone">Done</button></div>
     </div>`;
+    wrap.querySelector('.modal').scrollTop = scroll;
     wrap.querySelector('#cDone').addEventListener('click', finish);
+    wrap.querySelector('#cAdd').addEventListener('click', async ()=>{
+      const name = await promptGymName('Add a gym', '');
+      if(name){ addGym(name); draw(); }
+    });
     wrap.querySelectorAll('[data-rename]').forEach(b=>b.addEventListener('click', async ()=>{
       const m = machineById(b.dataset.rename);
       const name = await promptGymName('Rename gym', m.name);
       if(name){ m.name = name; scheduleSave(); draw(); }
+    }));
+    wrap.querySelectorAll('[data-sess-gym]').forEach(b=>b.addEventListener('click', ()=>{
+      const sess = DATA.sessions.find(x=>x.id===b.dataset.sessGym);
+      if(!sess) return;
+      // tapping the gym it's already at clears it again
+      setPastSessionGym(sess, sessionGymTag(sess)===b.dataset.to ? '' : b.dataset.to);
+      retagged = true; scheduleSave(); draw();
+    }));
+    wrap.querySelectorAll('[data-bulk-gym]').forEach(b=>b.addEventListener('click', ()=>{
+      const gymId = b.dataset.bulkGym;
+      const sessions = unset.map(x=>x.sess);
+      sessions.forEach(sess=>setPastSessionGym(sess, gymId));
+      retagged = true; scheduleSave(); draw();
+      showToast(`${sessions.length} session${sessions.length===1?'':'s'} set to ${machineName(gymId)}.`, ()=>{
+        sessions.forEach(sess=>setPastSessionGym(sess, ''));
+        rebuildPRRecordsFromHistory(); scheduleSave();
+        if(document.body.contains(wrap)) draw();
+      });
     }));
     wrap.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click', ()=>{
       const m = machineById(b.dataset.remove);
@@ -4650,6 +4739,7 @@ function inferRepRange(name){
   if(/romanian|\brdl\b|stiff-?leg/.test(n)) return { low:6, high:10 };
   if(/nordic/.test(n)) return { low:3, high:8 };
   if(/deadlift|back squat|front squat|barbell bench|overhead press|power clean|snatch|clean and jerk|trap bar/.test(n)) return { low:3, high:6 };
+  if(/pallof/.test(n)) return { low:10, high:15 }; // anti-rotation core work, not a press
   if(/squat|bench|press|row|pulldown|pull-?up|chin-?up|dip|hip thrust|leg press|split squat|lunge|step-?up/.test(n)) return { low:6, high:10 };
   if(/plank|hold|carry/.test(n)) return { low:20, high:60 };
   if(/rollout|ab-?wheel|hanging (knee|leg) raise|dead ?bug|bird ?dog/.test(n)) return { low:8, high:15 };
@@ -7460,6 +7550,7 @@ document.getElementById('volBtn').addEventListener('click', openSetVolumeModal);
 document.getElementById('prsBtn').addEventListener('click', openPRsModal);
 document.getElementById('trashLink').addEventListener('click', openTrashModal);
 document.getElementById('coachLink').addEventListener('click', openCoachPrefsModal);
+document.getElementById('gymsLink').addEventListener('click', ()=>openManageGymsModal());
 document.getElementById('splitLink').addEventListener('click', async ()=>{
   const pick = await chooseDialog('Training split', 'How do you split your sessions? Changing this only affects new sessions — your history stays as it is.',
     Object.entries(SPLIT_STYLES).map(([k,v])=>({ key:k, label:v.label+(k===splitStyle()?'  ✓':''), hint:v.desc, primary:k===splitStyle() })));
