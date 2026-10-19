@@ -623,6 +623,7 @@ const MUSCLE_MAP = {
   'Ab-wheel rollout': {abs:1, obliques:.3, lats:.2},
   // renamed / cleaned-up exercise names
   'Barbell hip thrust': {glutes:1, hamstrings:.4},
+  'Hip thrust machine': {glutes:1, hamstrings:.4},
   'Face pull': {rearDelt:1, traps:.4},
   'Machine ab crunch': {abs:1},
   'Dumbbell step-up': {quads:1, glutes:.6, hamstrings:.3},
@@ -1252,7 +1253,7 @@ const LIBRARY_ADDITIONS = [
 /** Exercise renames: gym shorthand, brand names, and inconsistent hyphenation
  *  cleaned up to consistent, unambiguous names. */
 const NAME_FIXUPS = {
-  'booty-builder-hip-thrust':'Barbell hip thrust',
+  'booty-builder-hip-thrust':'Hip thrust machine', // a Booty Builder is a hip-thrust machine
   'bent-over-row':'Bent-over row',
   'neutral-lat-pulldown':'Neutral-grip lat pulldown',
   'wide-seated-row':'Wide-grip seated row',
@@ -1345,7 +1346,7 @@ function migrateData(){
     changed = true;
   });
   DATA.exercises.forEach(e=>{
-    if(NAME_FIXUPS[e.id] && e.name !== NAME_FIXUPS[e.id]){ e.name = NAME_FIXUPS[e.id]; changed = true; }
+    if(NAME_FIXUPS[e.id] && e.name !== NAME_FIXUPS[e.id] && !e.renamedByUser){ const was = e.name; e.name = NAME_FIXUPS[e.id]; addAlias(e, was); changed = true; }
     if(CATEGORY_FIXUPS[e.id] && e.cat !== CATEGORY_FIXUPS[e.id]){ e.cat = CATEGORY_FIXUPS[e.id]; changed = true; }
     else if(e.cat === 'core'){ e.cat = 'aux'; changed = true; }
   });
@@ -2323,14 +2324,14 @@ function addGym(name){
 }
 /** Short text prompt that stacks above whatever's open (closeModal would take the
  *  pop-up underneath down with it). Resolves to the trimmed name, or null. */
-function promptGymName(title, initial){
+function promptGymName(title, initial, placeholder){
   return new Promise(resolve=>{
     const wrap = document.createElement('div');
     wrap.className = 'modal-backdrop';
     wrap.style.zIndex = 400;
     wrap.innerHTML = `<div class="modal" style="max-width:420px;">
       <h2>${escapeHtml(title)}</h2>
-      <div class="field"><input type="text" id="gymName" value="${escapeHtml(initial)}" placeholder="e.g. Town gym" autocapitalize="words"></div>
+      <div class="field"><input type="text" id="gymName" value="${escapeHtml(initial)}" placeholder="${escapeHtml(placeholder||'e.g. Town gym')}" autocapitalize="sentences"></div>
       <div class="modal-actions">
         <button class="btn ghost" id="cCancel">Cancel</button>
         <button class="btn primary" id="cOk">Save</button>
@@ -6930,6 +6931,28 @@ function guessCategory(name){
   return 'aux';
 }
 
+/** An exercise's earlier names, so a log that still uses one lands on the same exercise. */
+function addAlias(ex, name){
+  if(!name || name.toLowerCase()===ex.name.toLowerCase()) return;
+  ex.aliases = [...new Set([...(ex.aliases||[]), name])];
+}
+function hasAlias(ex, lower){ return (ex.aliases||[]).some(a=>a.toLowerCase()===lower); }
+/** Renames an exercise everywhere at once. History is stored against its id, so
+ *  only the label changes; the old name is kept as an alias. Returns an undo. */
+function renameExercise(ex, name){
+  const before = { name: ex.name, aliases: ex.aliases ? ex.aliases.slice() : null, renamedByUser: !!ex.renamedByUser };
+  const was = ex.name;
+  ex.name = name;
+  ex.aliases = (ex.aliases||[]).filter(a=>a.toLowerCase()!==name.toLowerCase());
+  addAlias(ex, was);
+  ex.renamedByUser = true;
+  return ()=>{
+    ex.name = before.name;
+    if(before.aliases) ex.aliases = before.aliases; else delete ex.aliases;
+    if(before.renamedByUser) ex.renamedByUser = true; else delete ex.renamedByUser;
+  };
+}
+
 /** Every existing exercise a pasted name could plausibly mean, best match first.
  *  "incline dumbbell" matches both the press and the curl, so the UI can ask
  *  rather than silently picking whichever happens to come first. */
@@ -6937,11 +6960,12 @@ function candidateExercisesFor(name){
   const lower = (name||'').trim().toLowerCase();
   if(!lower) return [];
   const exact = DATA.exercises.filter(e=>e.name.toLowerCase()===lower);
+  const byAlias = DATA.exercises.filter(e=>!exact.includes(e) && hasAlias(e, lower));
   const partial = DATA.exercises.filter(e=>{
     const n = e.name.toLowerCase();
-    return n!==lower && (n.includes(lower) || lower.includes(n));
+    return n!==lower && !byAlias.includes(e) && (n.includes(lower) || lower.includes(n));
   }).sort((a,b)=>a.name.length-b.name.length);
-  return exact.concat(partial);
+  return exact.concat(byAlias, partial);
 }
 
 /** Finds an existing exercise by (loose) name match, or creates a new one with a guessed category. */
@@ -6950,6 +6974,7 @@ function resolveOrCreateExercise(name){
   if(!clean) return null;
   const lower = clean.toLowerCase();
   let ex = DATA.exercises.find(e=>e.name.toLowerCase()===lower);
+  if(!ex) ex = DATA.exercises.find(e=>hasAlias(e, lower));
   if(!ex) ex = DATA.exercises.find(e=> e.name.toLowerCase().includes(lower) || lower.includes(e.name.toLowerCase()));
   if(ex) return ex;
   let id = clean.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || ('exercise-'+Date.now());
@@ -7304,7 +7329,7 @@ function openDetailModal(exId, sortedSessions, viewGym){
   const m = openModal(`
     <div class="modal wide">
       <button class="modal-close" id="mClose">&times;</button>
-      <div class="detail-head"><h2 style="margin:0">${escapeHtml(ex.name)}</h2></div>
+      <div class="detail-head"><h2 style="margin:0">${escapeHtml(ex.name)}</h2><button class="btn ghost" id="fRenameEx" style="padding:3px 8px;font-size:10px;">Rename</button></div>
       <div class="cat-pill" style="margin-top:6px;"><span class="dot" style="background:${CATS[ex.cat].color}"></span>${CATS[ex.cat].label}</div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12px; color:var(--text-dim); flex-wrap:wrap;">
         <span>Equipment</span>
@@ -7342,6 +7367,15 @@ function openDetailModal(exId, sortedSessions, viewGym){
   m.querySelector('#mClose').addEventListener('click', closeModal);
 
   const reopen = (gym)=>{ closeModal(); openDetailModal(exId, sortedSessions, gym===undefined ? machineId : gym); };
+  m.querySelector('#fRenameEx').addEventListener('click', async ()=>{
+    const name = await promptGymName('Rename exercise', ex.name, 'e.g. Hip thrust machine');
+    if(!name || name===ex.name) return;
+    const clash = DATA.exercises.find(e=>e!==ex && e.name.toLowerCase()===name.toLowerCase());
+    if(clash){ showToast(`You already have an exercise called ${clash.name}.`); return; }
+    const undo = renameExercise(ex, name);
+    scheduleSave(); render(); reopen();
+    showToast(`Renamed to ${name}, with all its history.`, ()=>{ undo(); scheduleSave(); render(); reopen(); });
+  });
   m.querySelectorAll('[data-view-gym]').forEach(b=>b.addEventListener('click', ()=>reopen(b.dataset.viewGym)));
   m.querySelectorAll('[data-ex-pref]').forEach(b=>b.addEventListener('click', ()=>{
     if(b.dataset.exPref==='normal') delete ex.priority; else ex.priority = b.dataset.exPref;

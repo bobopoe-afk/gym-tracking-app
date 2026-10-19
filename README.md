@@ -65,6 +65,10 @@ Search for these to jump around:
   and works out a next-step suggestion
 - `function repRangeFor` — per-exercise rep range (inferred by name, or an
   explicit override you've set)
+- `function renameExercise` — Rename on an exercise's page. History is keyed by
+  exercise id, so only the label changes; old names are kept in `aliases` so
+  pasted logs still match, and `NAME_FIXUPS` never undoes a name you chose
+  (`renamedByUser`).
 - `function openWorkoutMode` — the main session editor: logging sets, the
   exercise search/swap picker, reordering
 - `function openDayModal` — the Calendar tab's per-day view: logged +
