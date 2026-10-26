@@ -479,6 +479,7 @@
   .blk-hint b{ color:var(--text); }
   .blk-unote{ font-size:13px; margin:0; padding:6px 10px; background:var(--surface-2); border-radius:2px; }
   .blk-tag{ display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:10px; border:1px solid var(--border); border-radius:2px; padding:0 5px; margin-right:6px; color:var(--text); }
+  .blk-copy{ font-size:13px; color:var(--text-dim); margin:0 0 12px; }
   .blk-acts{ display:flex; flex-wrap:wrap; gap:6px; }
   .blk-max-row{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 10px; align-items:baseline; padding:5px 0; border-top:1px solid var(--border); font-size:13px; }
   .blk-max-row:first-of-type{ border-top:0; }
@@ -5186,6 +5187,62 @@ function blockMoveItem(item){
   });
 }
 
+/* ---------- the block as text ----------
+   Short enough to paste into a chat with a coach or an AI: one line per day, sets,
+   reps, weights and RIR, plus the notes that say what's going on that day. The
+   exercise cues are left out — they're most of the length and rarely the question. */
+function blockWeekText(w){
+  const b = DATA.block, maxes = blockWeekMaxes(w.key), end = blockWeekEnd(w);
+  const phase = ((b.phases||{})[w.phase]||{}).name;
+  const g = w.guide || {};
+  const day = (d)=>new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short', day:'numeric', month:'short'});
+  const lines = [`${w.label} (${day(w.start)} – ${day(end)})${phase?' · '+phase:''}${(b.frozen||{})[w.key]?'':' · weights projected'}`];
+  if(g.aim) lines.push('Aim: '+g.aim+((g.key||[]).length ? ' '+g.key.join(' ') : ''));
+  for(let i=0; i<7; i++){
+    const date = addDaysStr(w.start, i);
+    const items = b.items.filter(it=>blockItemDate(it)===date && blockItemStatus(it)!=='removed');
+    if(!items.length) continue;
+    lines.push(day(date)+': '+items.map(it=>{
+      let s = it.title;
+      if(it.kind==='gym') s += ' — '+(it.rows||[]).map(r=>{
+        const kg = blockRowKg(r, maxes);
+        const rx = r.test ? 'max single' : `${r.sets}×${r.reps}${r.each?' ea':''}${kg!=null?' '+kg+'kg':r.kg?' '+r.kg:''}`;
+        return `${r.label||r.ex} ${rx}${r.rir?' RIR '+r.rir:''}`;
+      }).join('; ');
+      else if(it.kind==='run') s += ' '+it.km+' km';
+      else s += ' '+it.mins+' min';
+      if(it.skip) s += ' (skipped)';
+      if(it.userNote) s += ' ['+it.userNote+']';
+      return s;
+    }).join(' | '));
+  }
+  return lines.join('\n');
+}
+function blockText(weeks){
+  const b = DATA.block, maxes = blockMaxes();
+  const head = [b.name, 'Maxes: '+Object.entries(b.lifts).map(([k,L])=>`${L.ex} ${maxes[k].value}kg`).join(', ')+'. RIR = reps in reserve. Easy runs under 160 bpm, rides under 150.'];
+  return head.join('\n')+'\n\n'+weeks.map(blockWeekText).join('\n\n');
+}
+async function copyBlockText(weeks, what){
+  const text = blockText(weeks);
+  try{
+    await navigator.clipboard.writeText(text);
+    showToast(what+' copied as text.');
+  }catch(e){
+    const m = openModal(`
+      <div class="modal wide">
+        <button class="modal-close" id="mClose">&times;</button>
+        <h2>Copy ${escapeHtml(what.toLowerCase())}</h2>
+        <p class="modal-sub">Select all of this and copy it.</p>
+        <textarea readonly style="width:100%;height:220px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:2px;font-family:'IBM Plex Mono',monospace;font-size:11px;">${escapeHtml(text)}</textarea>
+        <div class="modal-actions"><button class="btn primary" id="mDone">Close</button></div>
+      </div>`);
+    m.querySelector('#mClose').addEventListener('click', closeModal);
+    m.querySelector('#mDone').addEventListener('click', closeModal);
+    const ta = m.querySelector('textarea'); ta.focus(); ta.select();
+  }
+}
+
 /* ---------- the Block tab ---------- */
 function blockItemStatus(item){
   if(item.skip) return 'skipped';
@@ -5281,6 +5338,7 @@ function renderBlockTab(){
       ${g.aim ? `<div class="blk-guide"><p><b>${escapeHtml(g.aim)}</b></p>${(g.key||[]).length?`<ul>${g.key.map(k=>`<li>${escapeHtml(k)}</li>`).join('')}</ul>`:''}
         <div class="blk-guide-dl"><div><span>Short on time</span>${escapeHtml(g.drop||'')}</div><div><span>Time to spare</span>${escapeHtml(g.add||'')}</div></div></div>` : ''}
       <ol class="blk-days">${days}</ol>
+      <p class="blk-copy">Copy as text: <a class="inline-link" data-blk-copy="week">this week</a> · <a class="inline-link" data-blk-copy="all">whole block</a></p>
       <div class="blk-guide"><p><b>Maxes</b></p>${maxesHTML}<p class="blk-hint" style="margin-top:8px;">They go up on their own when a logged set shows more. <a class="inline-link" data-blk-manage>Set one by hand</a></p></div>
       ${(b.howTo||[]).length ? `<details class="blk-guide"><summary><b>How the block works</b></summary><ul>${b.howTo.map(h=>`<li>${escapeHtml(h)}</li>`).join('')}</ul></details>` : ''}
     </div>`;
@@ -5289,6 +5347,10 @@ function renderBlockTab(){
   app.querySelectorAll('[data-blk-step]').forEach(el=>el.addEventListener('click', ()=>{ const w = b.weeks[wi + (+el.dataset.blkStep)]; if(w){ blockWeekShown = w.key; render(); } }));
   const t = app.querySelector('[data-blk-today]'); if(t) t.addEventListener('click', ()=>{ blockWeekShown = null; render(); });
   const mg = app.querySelector('[data-blk-manage]'); if(mg) mg.addEventListener('click', openBlockManageModal);
+  app.querySelectorAll('[data-blk-copy]').forEach(el=>el.addEventListener('click', ()=>{
+    if(el.dataset.blkCopy==='all') copyBlockText(b.weeks, 'Whole block');
+    else copyBlockText([wk], wk.label);
+  }));
   const itemByKey = (k)=>b.items.find(it=>it.key===k);
   app.querySelectorAll('[data-blk-toggle]').forEach(el=>el.addEventListener('click', ()=>{ const k = el.dataset.blkToggle; blockOpen.has(k) ? blockOpen.delete(k) : blockOpen.add(k); render(); }));
   app.querySelectorAll('[data-blk-open]').forEach(el=>el.addEventListener('click', ()=>openWorkoutMode(blockSessionId(itemByKey(el.dataset.blkOpen)))));
