@@ -11,7 +11,7 @@ owner cares about, and what's still open. Nothing personal lives in this repo
   from `main`). Pushing to `main` is a deploy.
 - Work has been done on `claude/fervent-clarke-0b58rr` and pushed to both that
   branch and `main` after each change, so the two are identical at handover
-  (`0b7f358`).
+  (`c7ca1ff` before training blocks).
 - No build step: everything is `index.html`. Accounts and sync are Supabase
   (`SUPABASE_SETUP.md`); the project URL and publishable key are in `CLOUD` in
   `index.html`, which is by design. Never put the service_role key in the app.
@@ -47,6 +47,10 @@ don't commit it. A small committed harness would be a good addition.
   carry `renamedByUser`; old names go in `aliases` so pasted logs still match.
 
 ## Recently built (newest first)
+
+- Training blocks: import a multi-week plan into an account (footer → Training
+  block), with its own Block tab. See the README map. The plan itself is
+  personal data and only ever lives in the account, never in this repo.
 
 - Rename any exercise from its page; history is keyed by id so it all follows
   (`renameExercise`, `aliases`). "Booty Builder / hip thrust" is now

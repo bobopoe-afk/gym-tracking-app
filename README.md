@@ -57,6 +57,14 @@ Search for these to jump around:
   session (`bigLift`), one new exercise per session (`variety`), alternating
   free-weight/machine days (`DATA.alternateEquip`). Starred exercises
   (`ex.priority='high'`) are worked in; `'never'` is never picked.
+- Training blocks (`DATA.block`, per account, absent unless imported — footer →
+  Training block): a multi-week programme pasted in as JSON (`importBlock`,
+  format `utb-block`). Lift weights are percentages of maxes worked out from the
+  log (`blockMaxes`: only ever rises, sets in block sessions count at the
+  planned RIR when the planned reps were done). Each week's maxes are fixed when
+  it starts and its gym sessions are created then (`blockSync`, ids
+  `blk-<item key>`), so past weeks don't change. Runs go into `runSchedule`
+  tagged `block`; rides only show in the Block tab.
 - `function buildSessionPool` / `function buildPoolForSession` — decides
   which exercises get suggested for a new session, in what order
   (compound-first, then accessory; aux always last)
