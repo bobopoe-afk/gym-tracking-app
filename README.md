@@ -64,7 +64,10 @@ Search for these to jump around:
   planned RIR when the planned reps were done). Each week's maxes are fixed when
   it starts and its gym sessions are created then (`blockSync`, ids
   `blk-<item key>`), so past weeks don't change. Runs go into `runSchedule`
-  tagged `block`; rides only show in the Block tab.
+  tagged `block`; rides only show in the Block tab. Clashes the plan made on
+  purpose come with the import (`accept` on a gym item, with a reason) and are
+  marked accepted like "keep it" in the clash prompt (`blockAcceptClashes`), for
+  those dates only.
 - `function buildSessionPool` / `function buildPoolForSession` — decides
   which exercises get suggested for a new session, in what order
   (compound-first, then accessory; aux always last)

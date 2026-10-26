@@ -4596,8 +4596,6 @@ function findClashes(){
   const out = [];
   upcomingLegSessions().forEach(sess=>{
     (DATA.runSchedule||[]).forEach(r=>{
-      // a training block spaces its own sessions and runs on purpose
-      if(sess.block && r.block) return;
       const b = runBuffer(r);
       if(b>=0 && Math.abs(daysBetween(sess.date, r.date))<=b) out.push({ session:sess, run:r });
     });
@@ -4826,6 +4824,16 @@ function blockItemDate(item){
   const s = item.kind==='gym' ? blockItemSession(item) : item.kind==='run' ? blockRunEntry(item) : null;
   return s ? s.date : item.date;
 }
+/** A week's days, plus — for the last week — any later day something has been moved to. */
+function blockWeekDates(w){
+  const days = [0,1,2,3,4,5,6].map(i=>addDaysStr(w.start, i));
+  const weeks = DATA.block.weeks;
+  if(w===weeks[weeks.length-1]){
+    const end = blockWeekEnd(w);
+    DATA.block.items.map(blockItemDate).filter(d=>d>end).sort().forEach(d=>{ if(!days.includes(d)) days.push(d); });
+  }
+  return days;
+}
 function blockCurrentWeek(){
   const t = todayLocal(), weeks = DATA.block.weeks;
   return weeks.find(w=>t>=w.start && t<=blockWeekEnd(w)) || (t<weeks[0].start ? weeks[0] : weeks[weeks.length-1]);
@@ -4886,7 +4894,7 @@ function blockRowNote(row, maxes){
   if(row.rir) bits.push('RIR '+row.rir);
   if(row.rest && !row.test) bits.push('rest '+blockRest(row.rest));
   let s = bits.join(' · ');
-  if(row.test && row.lift && maxes[row.lift]) s += '. '+blockTestNote(maxes[row.lift]);
+  if(row.test && row.lift && maxes[row.lift]) s += '. '+blockTestNote(maxes[row.lift])+(row.note?' '+row.note:'');
   else if(row.note) s += '. '+row.note;
   return s;
 }
@@ -4969,6 +4977,24 @@ function blockSync(){
     if(fixed){ s.blockProjected = false; changed = true; }
   });
   if(changed) scheduleSave();
+}
+/** The clashes a block's plan has already weighed up (each gym item's `accept`,
+ *  with its reason) are marked as accepted, the same way "keep it" does in the
+ *  clash prompt. The acceptance is for those dates: move either one and the
+ *  clash is checked again. */
+function blockAcceptClashes(items){
+  items.forEach(it=>{
+    const s = it.kind==='gym' && blockItemSession(it);
+    if(!s || !Array.isArray(it.accept)) return;
+    it.accept.forEach(a=>{
+      const runItem = DATA.block.items.find(x=>x.key===a.run);
+      const r = runItem && blockRunEntry(runItem);
+      if(!r) return;
+      const key = clashKey({ session:s, run:r });
+      s.clashOk = s.clashOk || [];
+      if(!s.clashOk.includes(key)) s.clashOk.push(key);
+    });
+  });
 }
 function blockRunLabel(item){ return item.title + (item.km ? ' · '+item.km+' km' : ''); }
 /** Puts the block's runs into the run schedule. A day that already has a run of
@@ -5105,6 +5131,7 @@ function importBlock(block, exMap, replaceRuns){
   };
   const kept = blockAddRuns(block.items.filter(it=>!keepWeeks.has(it.week) && it.date>=today), replaceRuns);
   blockSync();
+  blockAcceptClashes(block.items.filter(it=>!keepWeeks.has(it.week)));
   scheduleSave();
   currentTab = 'block';
   blockWeekShown = null;
@@ -5170,7 +5197,7 @@ function blockMoveItem(item){
   const m = openModal(`
     <div class="modal" style="max-width:400px;">
       <h2>Move ${escapeHtml(item.title)}</h2>
-      <div class="field"><input type="date" id="blkDate" value="${cur}" min="${b.weeks[0].start}" max="${blockWeekEnd(b.weeks[b.weeks.length-1])}"></div>
+      <div class="field"><input type="date" id="blkDate" value="${cur}" min="${b.weeks[0].start}" max="${addDaysStr(blockWeekEnd(b.weeks[b.weeks.length-1]), 21)}"></div>
       <div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn primary" id="mGo">Move</button></div>
     </div>`);
   m.querySelector('#mCancel').addEventListener('click', closeModal);
@@ -5210,11 +5237,10 @@ function blockWeekText(w){
   const range = new Date(w.start+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric', month:'short'});
   const lines = [`${w.short==='R'?'Recovery':'W'+w.short} from ${range}${phase?', '+phase:''}${(b.frozen||{})[w.key]?'':' (kg projected)'}${w.guide&&w.guide.aim?': '+w.guide.aim:''}`];
   const firstSentence = (t)=>{ const m = String(t).match(/^.*?[.!?](\s|$)/); return (m ? m[0] : String(t)).trim(); };
-  for(let i=0; i<7; i++){
-    const date = addDaysStr(w.start, i);
+  blockWeekDates(w).forEach(date=>{
     const items = b.items.filter(it=>blockItemDate(it)===date && !it.skip && blockItemStatus(it)!=='removed');
-    if(!items.length) continue;
-    lines.push(new Date(date+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short'})+' '+items.map(it=>{
+    if(!items.length) return;
+    lines.push(new Date(date+'T00:00:00').toLocaleDateString('en-GB',date>blockWeekEnd(w)?{weekday:'short', day:'numeric', month:'short'}:{weekday:'short'})+' '+items.map(it=>{
       let s = BLOCK_SHORT_TITLE[it.title] || it.title;
       if(it.kind==='gym') s += ': '+(it.rows||[]).map(r=>{
         const kg = blockRowKg(r, maxes);
@@ -5228,7 +5254,7 @@ function blockWeekText(w){
       if(it.userNote) s += ' ('+firstSentence(it.userNote)+')';
       return s;
     }).join(' + '));
-  }
+  });
   return lines.join('\n');
 }
 function blockText(weeks){
@@ -5254,8 +5280,7 @@ function blockFullText(){
     (g.key||[]).forEach(k=>out.push('- '+k));
     if(g.drop) out.push('Short on time: '+g.drop);
     if(g.add) out.push('Time to spare: '+g.add);
-    for(let i=0; i<7; i++){
-      const date = addDaysStr(w.start, i);
+    blockWeekDates(w).forEach(date=>{
       const items = b.items.filter(it=>blockItemDate(it)===date && blockItemStatus(it)!=='removed');
       out.push('', day(date)+(items.length?'':': rest'));
       items.forEach(it=>{
@@ -5265,7 +5290,7 @@ function blockFullText(){
         else if(it.note && !(it.userNote && it.titled)) out.push('  '+it.note);
         if(it.userNote) out.push('  Note: '+it.userNote);
       });
-    }
+    });
     out.push('');
   });
   return out.join('\n');
@@ -5339,7 +5364,8 @@ function renderBlockTab(){
   const wi = b.weeks.indexOf(wk), end = blockWeekEnd(wk);
   const started = !!(b.frozen||{})[wk.key];
   const maxes = blockWeekMaxes(wk.key);
-  const items = b.items.filter(it=>{ const d = blockItemDate(it); return d>=wk.start && d<=end; });
+  const dates = blockWeekDates(wk);
+  const items = b.items.filter(it=>dates.includes(blockItemDate(it)));
   const live = items.filter(it=>!it.skip && blockItemStatus(it)!=='removed');
   const km = live.filter(it=>it.kind==='run').reduce((a,it)=>a+(Number(it.km)||0),0);
   const rideMins = live.filter(it=>it.kind==='ride').reduce((a,it)=>a+(Number(it.mins)||0),0);
@@ -5362,8 +5388,9 @@ function renderBlockTab(){
     if(open){
       if(it.kind==='gym'){
         body += `<ol class="blk-rows">${(it.rows||[]).map(r=>`<li><div class="blk-row-top"><span>${r.ss?`<b class="blk-ss">${escapeHtml(r.ss)}</b>`:''}${escapeHtml(r.label||r.ex)}</span><span class="blk-rx">${escapeHtml(blockRowText(r, maxes))}</span></div>
-          <div class="blk-row-note">${r.rir?`<span class="blk-tag">RIR ${escapeHtml(r.rir)}</span>`:''}${r.rest&&!r.test?`<span class="blk-tag">Rest ${blockRest(r.rest)}</span>`:''}${escapeHtml(r.test && r.lift && maxes[r.lift] ? blockTestNote(maxes[r.lift]) : (r.note||''))}</div></li>`).join('')}</ol>`;
-        if(gyms.some(x=>(x.rows||[]).some(r=>r.lift && !r.test))) body += `<p class="blk-hint"><b>Too easy?</b> If the first work set leaves 2 or more reps more in hand than its RIR, add 2.5kg (5kg on squats and deadlifts) for the rest and log what you did. The app raises your max from it for the weeks that follow.</p>`;
+          <div class="blk-row-note">${r.rir?`<span class="blk-tag">RIR ${escapeHtml(r.rir)}</span>`:''}${r.rest&&!r.test?`<span class="blk-tag">Rest ${blockRest(r.rest)}</span>`:''}${escapeHtml(r.test && r.lift && maxes[r.lift] ? blockTestNote(maxes[r.lift])+(r.note?' '+r.note:'') : (r.note||''))}</div></li>`).join('')}</ol>`;
+        (it.accept||[]).forEach(a=>{ body += `<p class="blk-hint"><b>Close to a hard run on purpose:</b> ${escapeHtml(a.why||'')}</p>`; });
+        if((it.rows||[]).some(r=>r.lift && !r.test)) body += `<p class="blk-hint"><b>Too easy?</b> If the first work set leaves 2 or more reps more in hand than its RIR, add 2.5kg (5kg on squats and deadlifts) for the rest and log what you did. The app raises your max from it for the weeks that follow.</p>`;
       } else if(it.note && !(it.userNote && it.titled)) body += `<p class="blk-note">${escapeHtml(it.note)}</p>`;
       if(it.userNote) body += `<p class="blk-unote">${escapeHtml(it.userNote)}</p>`;
       const acts = [];
@@ -5384,13 +5411,12 @@ function renderBlockTab(){
   };
 
   let days = '';
-  for(let d=0; d<7; d++){
-    const date = addDaysStr(wk.start, d);
+  dates.forEach(date=>{
     const list = items.filter(it=>blockItemDate(it)===date);
     const dl = new Date(date+'T00:00:00');
     days += `<li class="blk-day ${date===today?'today':''}"><div class="blk-dlabel"><b>${dl.toLocaleDateString('en-GB',{weekday:'short'})}</b><span>${dl.getDate()} ${dl.toLocaleDateString('en-GB',{month:'short'})}</span></div>
       <div class="blk-dsess">${list.length ? list.map(itemHTML).join('') : '<p class="blk-rest">Rest day</p>'}</div></li>`;
-  }
+  });
 
   const allMaxes = blockMaxes();
   const maxesHTML = Object.entries(b.lifts).map(([k,L])=>{
