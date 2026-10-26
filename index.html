@@ -5188,40 +5188,68 @@ function blockMoveItem(item){
 }
 
 /* ---------- the block as text ----------
-   Short enough to paste into a chat with a coach or an AI: one line per day, sets,
-   reps, weights and RIR, plus the notes that say what's going on that day. The
-   exercise cues are left out — they're most of the length and rarely the question. */
+   Short enough to paste into a chat with a coach or an AI: one line per day with
+   sets, reps, kg and RIR, in gym shorthand, and the first sentence of each day's
+   note. Cues and skipped sessions are left out, and a phase at a time can be
+   copied when the whole block is still too long for a message box. */
+const BLOCK_SHORT = {
+  'Back squat':'Squat', 'Bench press':'Bench', 'Mid-grip bench press':'Mid-grip bench', 'Deadlift':'DL',
+  'Overhead press':'OHP', 'Romanian deadlift':'RDL', 'Snatch-grip deficit deadlift':'Snatch-grip deficit DL',
+  'Paused deficit deadlift':'Paused deficit DL', 'Bulgarian split squat':'BSS', 'Lat pulldown':'Pulldown',
+  'Seated cable row':'Cable row', 'Standing calf raise':'Standing calf', 'Seated calf raise':'Seated calf',
+  'Incline DB press':'Incline DB', 'Incline Zottman curl':'Zottman curl', 'Overhead cable extension':'OH cable ext',
+  'Lateral raise':'Laterals', 'Side plank + plank':'Planks', '45° back extension':'Back ext',
+  'Heels-raised squat':'Heels-up squat', 'Seated DB shoulder press':'Seated DB press', 'Hip thrust machine':'Hip thrust',
+};
+const BLOCK_SHORT_TITLE = { 'Easy run':'Easy', 'Medium-long run + strides':'Med-long+strides', 'Long run':'Long', 'Long easy ride':'Ride', 'Easy shakeout':'Shakeout', 'Upper body (light)':'Upper (light)' };
 function blockWeekText(w){
-  const b = DATA.block, maxes = blockWeekMaxes(w.key), end = blockWeekEnd(w);
+  const b = DATA.block, maxes = blockWeekMaxes(w.key);
   const phase = ((b.phases||{})[w.phase]||{}).name;
-  const g = w.guide || {};
-  const day = (d)=>new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short', day:'numeric', month:'short'});
-  const lines = [`${w.label} (${day(w.start)} – ${day(end)})${phase?' · '+phase:''}${(b.frozen||{})[w.key]?'':' · weights projected'}`];
-  if(g.aim) lines.push('Aim: '+g.aim+((g.key||[]).length ? ' '+g.key.join(' ') : ''));
+  const range = new Date(w.start+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric', month:'short'});
+  const lines = [`${w.short==='R'?'Recovery':'W'+w.short} from ${range}${phase?', '+phase:''}${(b.frozen||{})[w.key]?'':' (kg projected)'}${w.guide&&w.guide.aim?': '+w.guide.aim:''}`];
+  const firstSentence = (t)=>{ const m = String(t).match(/^.*?[.!?](\s|$)/); return (m ? m[0] : String(t)).trim(); };
   for(let i=0; i<7; i++){
     const date = addDaysStr(w.start, i);
-    const items = b.items.filter(it=>blockItemDate(it)===date && blockItemStatus(it)!=='removed');
+    const items = b.items.filter(it=>blockItemDate(it)===date && !it.skip && blockItemStatus(it)!=='removed');
     if(!items.length) continue;
-    lines.push(day(date)+': '+items.map(it=>{
-      let s = it.title;
-      if(it.kind==='gym') s += ' — '+(it.rows||[]).map(r=>{
+    lines.push(new Date(date+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short'})+' '+items.map(it=>{
+      let s = BLOCK_SHORT_TITLE[it.title] || it.title;
+      if(it.kind==='gym') s += ': '+(it.rows||[]).map(r=>{
         const kg = blockRowKg(r, maxes);
-        const rx = r.test ? 'max single' : `${r.sets}×${r.reps}${r.each?' ea':''}${kg!=null?' '+kg+'kg':r.kg?' '+r.kg:''}`;
-        return `${r.label||r.ex} ${rx}${r.rir?' RIR '+r.rir:''}`;
-      }).join('; ');
-      else if(it.kind==='run') s += ' '+it.km+' km';
-      else s += ' '+it.mins+' min';
-      if(it.skip) s += ' (skipped)';
-      if(it.userNote) s += ' ['+it.userNote+']';
+        const reps = String(r.reps).replace(/ each side/g,'ea').replace(/\s+/g,'');
+        const load = kg!=null ? ' '+kg : r.kg ? ' '+String(r.kg).replace(/\s*kg\b/g,'').replace(/\s*assist/,'') : '';
+        const rx = r.test ? ' max single' : ` ${r.sets}×${reps}${r.each?'ea':''}${load}`;
+        return `${BLOCK_SHORT[r.ex]||r.ex}${rx}${r.rir?' @'+r.rir:''}`;
+      }).join(', ');
+      else if(it.kind==='run') s += ' '+it.km+'k';
+      else s += ' '+it.mins+'m';
+      if(it.userNote) s += ' ('+firstSentence(it.userNote)+')';
       return s;
-    }).join(' | '));
+    }).join(' + '));
   }
   return lines.join('\n');
 }
 function blockText(weeks){
   const b = DATA.block, maxes = blockMaxes();
-  const head = [b.name, 'Maxes: '+Object.entries(b.lifts).map(([k,L])=>`${L.ex} ${maxes[k].value}kg`).join(', ')+'. RIR = reps in reserve. Easy runs under 160 bpm, rides under 150.'];
-  return head.join('\n')+'\n\n'+weeks.map(blockWeekText).join('\n\n');
+  return `${b.name}. Maxes: ${Object.entries(b.lifts).map(([k,L])=>`${BLOCK_SHORT[L.ex]||L.ex} ${maxes[k].value}`).join(', ')}. `
+    + 'Loads in kg; @n = reps in reserve; ea = each side; DL deadlift, OHP overhead press, RDL Romanian deadlift, BSS Bulgarian split squat. '
+    + 'Runs in km (easy under 160 bpm), rides in minutes (under 150).\n\n'
+    + weeks.map(blockWeekText).join('\n\n');
+}
+/** The block in phase-sized pieces, the recovery week going with the first. */
+function blockChunks(){
+  const groups = [];
+  DATA.block.weeks.forEach(w=>{
+    const key = w.phase==='L' ? 'A' : w.phase;
+    const last = groups[groups.length-1];
+    if(last && last.key===key) last.weeks.push(w); else groups.push({ key, weeks:[w] });
+  });
+  return groups.map(g=>{
+    const nums = g.weeks.filter(w=>w.short!=='R').map(w=>w.short);
+    const first = g.weeks.some(w=>w.short==='R') ? 'R' : nums[0];
+    g.label = first + (nums.length && nums[nums.length-1]!==first ? '–'+nums[nums.length-1] : '');
+    return g;
+  });
 }
 async function copyBlockText(weeks, what){
   const text = blockText(weeks);
@@ -5338,7 +5366,7 @@ function renderBlockTab(){
       ${g.aim ? `<div class="blk-guide"><p><b>${escapeHtml(g.aim)}</b></p>${(g.key||[]).length?`<ul>${g.key.map(k=>`<li>${escapeHtml(k)}</li>`).join('')}</ul>`:''}
         <div class="blk-guide-dl"><div><span>Short on time</span>${escapeHtml(g.drop||'')}</div><div><span>Time to spare</span>${escapeHtml(g.add||'')}</div></div></div>` : ''}
       <ol class="blk-days">${days}</ol>
-      <p class="blk-copy">Copy as text: <a class="inline-link" data-blk-copy="week">this week</a> · <a class="inline-link" data-blk-copy="all">whole block</a></p>
+      <p class="blk-copy">Copy as text: <a class="inline-link" data-blk-copy="week">this week</a> · weeks ${blockChunks().map((c,i)=>`<a class="inline-link" data-blk-copy="${i}">${c.label}</a>`).join(' · ')} · <a class="inline-link" data-blk-copy="all">whole block</a></p>
       <div class="blk-guide"><p><b>Maxes</b></p>${maxesHTML}<p class="blk-hint" style="margin-top:8px;">They go up on their own when a logged set shows more. <a class="inline-link" data-blk-manage>Set one by hand</a></p></div>
       ${(b.howTo||[]).length ? `<details class="blk-guide"><summary><b>How the block works</b></summary><ul>${b.howTo.map(h=>`<li>${escapeHtml(h)}</li>`).join('')}</ul></details>` : ''}
     </div>`;
@@ -5348,8 +5376,10 @@ function renderBlockTab(){
   const t = app.querySelector('[data-blk-today]'); if(t) t.addEventListener('click', ()=>{ blockWeekShown = null; render(); });
   const mg = app.querySelector('[data-blk-manage]'); if(mg) mg.addEventListener('click', openBlockManageModal);
   app.querySelectorAll('[data-blk-copy]').forEach(el=>el.addEventListener('click', ()=>{
-    if(el.dataset.blkCopy==='all') copyBlockText(b.weeks, 'Whole block');
-    else copyBlockText([wk], wk.label);
+    const c = el.dataset.blkCopy, chunk = blockChunks()[+c];
+    if(c==='all') copyBlockText(b.weeks, 'Whole block');
+    else if(c==='week') copyBlockText([wk], wk.label);
+    else if(chunk) copyBlockText(chunk.weeks, 'Weeks '+chunk.label);
   }));
   const itemByKey = (k)=>b.items.find(it=>it.key===k);
   app.querySelectorAll('[data-blk-toggle]').forEach(el=>el.addEventListener('click', ()=>{ const k = el.dataset.blkToggle; blockOpen.has(k) ? blockOpen.delete(k) : blockOpen.add(k); render(); }));
