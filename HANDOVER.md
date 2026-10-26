@@ -48,6 +48,9 @@ don't commit it. A small committed harness would be a good addition.
 
 ## Recently built (newest first)
 
+- Plan and Log are separate tabs. Plan (first) has the Today card and what's
+  coming up, two weeks ahead unless "Show more"; Log has past sessions and the
+  grid. A training block plans months ahead, which buried the log.
 - Training blocks: import a multi-week plan into an account (footer → Training
   block), with its own Block tab. See the README map. The plan itself is
   personal data and only ever lives in the account, never in this repo.

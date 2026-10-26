@@ -255,6 +255,9 @@
   .sugg-row .sname{ font-weight:600; font-size:13.5px; padding-top:8px; }
   .sugg-row input{ width:100%; background:var(--surface-2); border:1px solid var(--border); color:var(--text); padding:9px 10px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:12px; }
   .sugg-row .snote{ font-size:11px; color:var(--text-faint); margin-top:5px; }
+  .sess-more{ margin:10px 0 0; font-size:13px; }
+  /* five tabs on a phone: tighter spacing so they all fit */
+  @media (max-width:480px){ .tab-btn{ margin-right:15px; letter-spacing:.07em; } .tab-btn:last-child{ margin-right:0; } }
   .plan-error{ color:var(--accent); font-size:13px; padding:14px 0; }
 
   /* ---------- modal ---------- */
@@ -517,7 +520,8 @@
     </div>
     <div class="stat-row" id="statRow"></div>
     <div class="tabs" id="tabs" role="tablist">
-      <button class="tab-btn active" data-tab="log" role="tab" aria-selected="true">Log</button>
+      <button class="tab-btn active" data-tab="plan" role="tab" aria-selected="true">Plan</button>
+      <button class="tab-btn" data-tab="log" role="tab" aria-selected="false">Log</button>
       <button class="tab-btn" data-tab="calendar" role="tab" aria-selected="false">Calendar</button>
       <button class="tab-btn" data-tab="autoplan" role="tab" aria-selected="false">Plan my week</button>
       <button class="tab-btn" data-tab="block" role="tab" aria-selected="false" hidden>Block</button>
@@ -1280,7 +1284,8 @@ let activeCat = 'all';
 let hideEmpty = false;
 let activeTodaySessionId = null; // which of today's sessions the Today card is showing
 let logView = 'sessions'; // 'sessions' (compact list) | 'grid' (exercise x session table)
-let currentTab = 'log';
+let showAllUpcoming = false; // the Plan tab shows two weeks ahead unless asked for everything
+let currentTab = 'plan';
 let saveTimer = null;
 
 const CATEGORY_FIXUPS = {
@@ -2030,7 +2035,7 @@ function render(){
   const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   updateStatRow();
 
-  if(currentTab==='block' && !DATA.block) currentTab = 'log';
+  if(currentTab==='block' && !DATA.block) currentTab = 'plan';
   document.querySelectorAll('.tab-btn').forEach(b=>{
     if(b.dataset.tab==='block') b.hidden = !DATA.block;
     const isActive = b.dataset.tab===currentTab;
@@ -2043,7 +2048,7 @@ function render(){
   // rebuilding the tab briefly changes the page height, which can throw the scroll
   // position around on phones — hold it where it was
   const y = scrollLockY===null ? window.scrollY : null;
-  if(currentTab==='log') renderLogTab(sortedSessions);
+  if(currentTab==='plan' || currentTab==='log') renderLogTab(sortedSessions, currentTab);
   else if(currentTab==='calendar') renderCalendarTab(sortedSessions);
   else if(currentTab==='block') renderBlockTab();
   else renderAutoPlanTab(sortedSessions);
@@ -2168,16 +2173,29 @@ async function copyWeekPlan(){
     const ta = m.querySelector('textarea'); ta.focus(); ta.select();
   }
 }
-function renderSessionList(sortedSessions){
+/** One half of the session list: 'plan' is what's coming up, soonest first (two
+ *  weeks of it unless asked for all — a training block plans months ahead);
+ *  'log' is what's been and gone, newest first. */
+function renderSessionList(sortedSessions, half){
   const all = (activeCat==='all' ? sortedSessions : sortedSessions.filter(s=>s.cat===activeCat));
-  if(!all.length) return '<div class="plan-empty">No sessions logged yet.</div>';
-  // what's next reads top-down (soonest first); history reads newest first
   const todayStr = todayLocal();
-  const upcoming = all.filter(x=>x.date>todayStr || (x.date===todayStr && !sessionHasActual(x)));
-  const past = all.filter(x=>!upcoming.includes(x)).slice().reverse();
-  const visible = upcoming.concat(past);
-
-  const rows = visible.map(sess=>{
+  const upcomingAll = all.filter(x=>x.date>todayStr || (x.date===todayStr && !sessionHasActual(x)));
+  if(half==='plan'){
+    if(!upcomingAll.length) return '<div class="plan-empty">Nothing planned. Plan a session, or let Plan my week fill the week in.</div>';
+    const horizon = addDaysStr(todayStr, 14);
+    const visible = showAllUpcoming ? upcomingAll : upcomingAll.filter(x=>x.date<=horizon);
+    const more = upcomingAll.length - visible.length;
+    return `<div class="sess-section-head"><span>Coming up</span><button class="btn ghost sess-mini" id="copyWeekBtn">Copy this week</button></div>
+      <div class="sess-list">${sessionCardsHTML(visible)}</div>
+      ${more ? `<p class="sess-more"><a class="inline-link" id="showAllUpcoming">Show ${more} more planned</a></p>`
+        : showAllUpcoming && upcomingAll.length>visible.filter(x=>x.date<=horizon).length ? `<p class="sess-more"><a class="inline-link" id="showAllUpcoming">Just the next two weeks</a></p>` : ''}`;
+  }
+  const past = all.filter(x=>!upcomingAll.includes(x)).slice().reverse();
+  if(!past.length) return '<div class="plan-empty">No sessions logged yet.</div>';
+  return `<div class="sess-list">${sessionCardsHTML(past)}</div>`;
+}
+function sessionCardsHTML(visible){
+  return visible.map(sess=>{
     const status = sessionStatus(sess);
     const logged = DATA.exercises
       .filter(e=>cellSets(e.id+'|'+sess.id).length)
@@ -2227,15 +2245,8 @@ function renderSessionList(sortedSessions){
         </span>
       </header>
       ${body}
-    </article><!--sess-card-end-->`;
+    </article>`;
   }).join('');
-
-  const nUp = upcoming.length;
-  const cards = rows.split('<!--sess-card-end-->');
-  const upHtml = cards.slice(0, nUp).join('');
-  const pastHtml = cards.slice(nUp).join('');
-  return `${nUp ? `<div class="sess-section-head"><span>Coming up</span><button class="btn ghost sess-mini" id="copyWeekBtn">Copy this week</button></div><div class="sess-list">${upHtml}</div>` : ''}
-    ${pastHtml ? `${nUp ? '<div class="sess-section-head"><span>Done</span></div>' : ''}<div class="sess-list">${pastHtml}</div>` : ''}`;
 }
 
 function generateInsight(sortedSessions){
@@ -3202,32 +3213,35 @@ function renderTodayCard(sortedSessions){
   </div>`;
 }
 
-function renderLogTab(sortedSessions){
+/** The Plan tab (today and what's coming up) and the Log tab (what's been done,
+ *  or the exercise grid) share a toolbar and filters; `half` says which this is. */
+function renderLogTab(sortedSessions, half){
   const app = document.getElementById('app');
   if(activeCat!=='all' && !sessionTypes().includes(activeCat)) activeCat = 'all';
   const cats = activeCat==='all' ? CAT_ORDER : catGroups(activeCat);
-  const featuredHtml = renderTodayCard(sortedSessions);
+  const isLog = half==='log';
+  const featuredHtml = isLog ? '' : renderTodayCard(sortedSessions);
 
 
   const filterHtml = `<div class="filters">
     <button class="filter-btn ${activeCat==='all'?'active':''}" data-cat="all">All</button>
     ${sessionTypes().map(c=>`<button class="filter-btn ${activeCat===c?'active':''}" data-cat="${c}"><span class="dot" style="background:${CATS[c].color}"></span>${CATS[c].label}</button>`).join('')}
-    <span class="view-switch">
+    ${isLog ? `<span class="view-switch">
       <button class="view-btn ${logView==='sessions'?'active':''}" data-log-view="sessions">Sessions</button>
       <button class="view-btn ${logView==='grid'?'active':''}" data-log-view="grid">Grid</button>
-    </span>
-    ${logView==='grid' ? `<label class="toggle-label"><input type="checkbox" id="hideEmptyChk" ${hideEmpty?'checked':''}> Hide empty columns</label>` : ''}
+    </span>` : ''}
+    ${isLog && logView==='grid' ? `<label class="toggle-label"><input type="checkbox" id="hideEmptyChk" ${hideEmpty?'checked':''}> Hide empty columns</label>` : ''}
   </div>`;
 
   let blocks = '';
-  if(logView==='grid'){
+  if(isLog && logView==='grid'){
     cats.forEach(cat=>{
       const exList = DATA.exercises.filter(e=>e.cat===cat);
       if(!exList.length) return;
       blocks += renderCategoryBlock(cat, exList, sortedSessions);
     });
   } else {
-    blocks = renderSessionList(sortedSessions);
+    blocks = renderSessionList(sortedSessions, half);
   }
 
   app.innerHTML = `
@@ -3244,6 +3258,8 @@ function renderLogTab(sortedSessions){
     ${blocks || '<div class="plan-empty">No exercises yet — add one to get started.</div>'}
   `;
   wireLogEvents(sortedSessions);
+  const sau = document.getElementById('showAllUpcoming');
+  if(sau) sau.addEventListener('click', ()=>{ showAllUpcoming = !showAllUpcoming; render(); });
   document.querySelectorAll('[data-split-style]').forEach(b=>b.addEventListener('click', ()=>{
     DATA.splitStyle = b.dataset.splitStyle; activeCat = 'all';
     scheduleSave(); render();
@@ -5164,7 +5180,7 @@ function openBlockManageModal(){
     if(!ok) return;
     blockClearFuture(null);
     delete DATA.block;
-    if(currentTab==='block') currentTab = 'log';
+    if(currentTab==='block') currentTab = 'plan';
     scheduleSave(); render();
     showToast('Block removed.');
   });
@@ -5357,7 +5373,7 @@ function blockItemStatus(item){
 function renderBlockTab(){
   const app = document.getElementById('app');
   const b = DATA.block;
-  if(!b){ currentTab = 'log'; render(); return; }
+  if(!b){ currentTab = 'plan'; render(); return; }
   const today = todayLocal();
   const wk = blockWeek(blockWeekShown) || blockCurrentWeek();
   blockWeekShown = wk.key;
