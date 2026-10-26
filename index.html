@@ -1997,7 +1997,9 @@ function updateStatRow(){
   }
   const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   const todayStr0 = todayLocal();
-  const pastSessions0 = sortedSessions.filter(s=>s.date<=todayStr0);
+  // only sessions with something logged: a planned one (a whole training block's
+  // worth, say) isn't a workout yet
+  const pastSessions0 = sortedSessions.filter(s=>s.date<=todayStr0 && sessionHasActual(s));
   const futureSessions0 = sortedSessions.filter(s=>s.date>todayStr0);
   let lastWorkoutStat = 'No sessions yet';
   if(pastSessions0.length){
@@ -2012,7 +2014,7 @@ function updateStatRow(){
     nextPlannedStat = (days===1 ? 'Tomorrow' : 'In '+days+'d') + ' · '+CATS[next.cat].label;
   }
   document.getElementById('statRow').innerHTML = [
-    {v:DATA.sessions.length, l:'sessions'},
+    {v:DATA.sessions.filter(sessionHasActual).length, l:'sessions'},
     {v:DATA.exercises.length, l:'exercises tracked'},
     {v:lastWorkoutStat, l:'last workout'},
     {v:nextPlannedStat, l:'next planned'},
@@ -4906,7 +4908,7 @@ function blockRowSets(row, exId, maxes, sortedSessions){
   if(!weight) return [];
   return Array.from({length:n}, ()=>({ weight:Object.assign({}, weight), reps, perSide:!!row.each, isSeconds:false, rir:null }));
 }
-function blockMakeSession(item, maxes){
+function blockSessionPlan(item, maxes){
   const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   const targets = {}, order = [], notes = {}, rx = {};
   (item.rows||[]).forEach(row=>{
@@ -4921,30 +4923,47 @@ function blockMakeSession(item, maxes){
       rx[exId] = prev ? { rir:Math.min(prev.rir, rir), reps:Math.min(prev.reps, reps) } : { rir, reps };
     }
   });
-  const date = item.date;
+  return { targets, order, notes, rx };
+}
+function blockMakeSession(item, maxes, projected){
+  const p = blockSessionPlan(item, maxes), date = item.date;
   DATA.sessions.push({
     id:blockSessionId(item), date,
     label:new Date(date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}),
-    cat:BLOCK_SESSION_CAT[item.type] || 'full', targets, order,
-    block:item.key, blockTitle:item.title, blockNotes:notes, blockRx:rx,
+    cat:BLOCK_SESSION_CAT[item.type] || 'full', targets:p.targets, order:p.order,
+    block:item.key, blockTitle:item.title, blockNotes:p.notes, blockRx:p.rx,
+    blockMaxes:maxes, blockProjected:!!projected,
   });
 }
-/** Starts every week that has begun: fixes its maxes and creates its gym sessions.
- *  Runs on every render, so a week opens on its Monday whenever the app is next used. */
+/** Every block gym session exists from the start, so the calendar and "next planned"
+ *  show the whole block. Until its week starts, a session untouched by logging is
+ *  re-planned whenever the maxes move; on the week's first day its maxes are fixed
+ *  and it's planned one last time. Runs on every render. */
 function blockSync(){
   const b = DATA.block;
   if(!b || !Array.isArray(b.weeks) || !b.weeks.length) return;
   b.frozen = b.frozen || {};
   const today = todayLocal();
+  const current = blockMaxValues(blockMaxes());
   let changed = false;
   b.weeks.forEach(w=>{
-    if(w.start <= today && !b.frozen[w.key]){ b.frozen[w.key] = blockMaxValues(blockMaxes()); changed = true; }
+    if(w.start <= today && !b.frozen[w.key]){ b.frozen[w.key] = current; changed = true; }
   });
-  // a session moved into an earlier week opens when its new day comes round;
   // `started` stops a session you deleted from coming back
-  b.items.filter(it=>it.kind==='gym' && !it.skip && !it.started && (b.frozen[it.week] || it.date<=today)).forEach(it=>{
-    if(!blockItemSession(it)) blockMakeSession(it, b.frozen[it.week] || blockMaxValues(blockMaxes()));
+  b.items.filter(it=>it.kind==='gym' && !it.skip && !it.started).forEach(it=>{
+    if(!blockItemSession(it)) blockMakeSession(it, b.frozen[it.week] || current, !b.frozen[it.week]);
     it.started = true; changed = true;
+  });
+  DATA.sessions.filter(s=>s.block && s.blockProjected).forEach(s=>{
+    const it = b.items.find(x=>x.key===s.block);
+    if(!it || sessionHasActual(s)){ s.blockProjected = false; changed = true; return; }
+    const fixed = b.frozen[it.week], maxes = fixed || current;
+    if(JSON.stringify(maxes)!==JSON.stringify(s.blockMaxes)){
+      const p = blockSessionPlan(it, maxes);
+      s.targets = p.targets; s.blockNotes = p.notes; s.blockRx = p.rx; s.blockMaxes = maxes;
+      changed = true;
+    }
+    if(fixed){ s.blockProjected = false; changed = true; }
   });
   if(changed) scheduleSave();
 }
