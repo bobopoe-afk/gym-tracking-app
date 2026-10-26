@@ -430,6 +430,65 @@
     .plan-controls, .cal-controls{ gap:10px; }
     .modal{ padding:20px; max-height:92vh; }
   }
+  /* training block */
+  .blk{ max-width:760px; margin:0 auto; }
+  .blk-top h2{ font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:34px; line-height:1; margin:6px 0 0; }
+  .blk-top .sub{ margin-top:6px; }
+  .blk-strip{ display:grid; grid-template-columns:repeat(9,minmax(0,1fr)); gap:4px; margin:16px 0 14px; }
+  @media (min-width:700px){ .blk-strip{ grid-template-columns:repeat(17,minmax(0,1fr)); } }
+  .blk-wk{ height:38px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:2px; font-family:'IBM Plex Mono',monospace; font-size:12px; cursor:pointer; position:relative; box-shadow:inset 0 -3px 0 var(--pc); padding:0; }
+  .blk-wk.sel{ background:var(--text); color:var(--bg); border-color:var(--text); }
+  .blk-wk.cur::after{ content:''; position:absolute; top:4px; right:4px; width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .blk-nav{ display:grid; grid-template-columns:44px minmax(0,1fr) 44px; align-items:center; gap:8px; }
+  .blk-nav .btn{ font-size:20px; padding:6px 0; }
+  .blk-wtitle{ text-align:center; min-width:0; }
+  .blk-wtitle h3{ font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:30px; line-height:1; margin:2px 0; }
+  .blk-wtitle span{ font-size:12px; color:var(--text-dim); }
+  .blk-phase{ display:block; font-family:'IBM Plex Mono',monospace; font-size:10px !important; text-transform:uppercase; letter-spacing:.12em; }
+  .blk-totals{ display:flex; flex-wrap:wrap; justify-content:center; gap:4px 16px; margin:12px 0; font-size:12.5px; color:var(--text-dim); }
+  .blk-totals b{ color:var(--text); font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:19px; }
+  .blk-guide{ background:var(--surface); border:1px solid var(--border); border-radius:2px; padding:12px 14px; margin:0 0 12px; font-size:13.5px; }
+  .blk-guide p{ margin:0 0 6px; }
+  .blk-guide ul{ margin:0 0 8px; padding-left:18px; }
+  .blk-guide li{ margin-bottom:3px; }
+  .blk-guide summary{ cursor:pointer; }
+  .blk-guide-dl{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px 16px; font-size:12.5px; }
+  .blk-guide-dl span{ display:block; font-family:'IBM Plex Mono',monospace; font-size:9.5px; text-transform:uppercase; letter-spacing:.12em; color:var(--text-faint); }
+  .blk-days{ list-style:none; margin:0 0 14px; padding:0; }
+  .blk-day{ display:grid; grid-template-columns:52px minmax(0,1fr); gap:10px; padding:10px 0; border-top:1px solid var(--border); }
+  .blk-dlabel{ display:flex; flex-direction:column; padding-top:7px; font-size:11.5px; color:var(--text-dim); }
+  .blk-dlabel b{ font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:19px; line-height:1; color:var(--text); text-transform:uppercase; }
+  .blk-day.today .blk-dlabel, .blk-day.today .blk-dlabel b{ color:var(--accent); }
+  .blk-dsess{ display:grid; gap:8px; min-width:0; }
+  .blk-rest{ color:var(--text-faint); margin:7px 0 0; font-size:13px; }
+  .blk-item{ background:var(--surface); border:1px solid var(--border); border-radius:2px; overflow:hidden; }
+  .blk-item.done{ opacity:.7; }
+  .blk-item.skipped .blk-title, .blk-item.removed .blk-title{ text-decoration:line-through; color:var(--text-faint); }
+  .blk-head{ width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; align-items:baseline; text-align:left; background:none; border:0; color:var(--text); padding:10px 12px; cursor:pointer; font:inherit; }
+  .blk-title{ font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; min-width:0; }
+  .blk-title .dot{ width:8px; height:8px; border-radius:50%; flex:none; }
+  .blk-done{ color:var(--leg); }
+  .blk-meta{ font-family:'IBM Plex Mono',monospace; font-size:12px; white-space:nowrap; }
+  .blk-line{ grid-column:1/-1; font-size:12px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .blk-body{ border-top:1px solid var(--border); padding:12px; display:grid; gap:10px; }
+  .blk-rows{ list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .blk-row-top{ display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 12px; font-weight:600; font-size:13.5px; }
+  .blk-rx{ font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:12.5px; white-space:nowrap; }
+  .blk-ss{ font-family:'IBM Plex Mono',monospace; color:var(--text-faint); margin-right:6px; }
+  .blk-row-note, .blk-note, .blk-hint{ font-size:12.5px; color:var(--text-dim); margin:2px 0 0; }
+  .blk-hint b{ color:var(--text); }
+  .blk-unote{ font-size:13px; margin:0; padding:6px 10px; background:var(--surface-2); border-radius:2px; }
+  .blk-tag{ display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:10px; border:1px solid var(--border); border-radius:2px; padding:0 5px; margin-right:6px; color:var(--text); }
+  .blk-acts{ display:flex; flex-wrap:wrap; gap:6px; }
+  .blk-max-row{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 10px; align-items:baseline; padding:5px 0; border-top:1px solid var(--border); font-size:13px; }
+  .blk-max-row:first-of-type{ border-top:0; }
+  .blk-max-row b{ font-family:'IBM Plex Mono',monospace; }
+  .blk-max-row small{ grid-column:1/-1; color:var(--text-faint); font-size:11.5px; }
+  .blk-max-row .btn{ grid-row:span 2; }
+  .modal .blk-max-row{ grid-template-columns:minmax(0,1fr) auto auto; }
+  .blk-check{ display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-top:6px; }
+  .blk-check input{ margin-top:3px; }
+  .workout-ex-plan{ font-size:12px; color:var(--text-dim); margin-bottom:6px; line-height:1.45; }
   @media (pointer: coarse){
     .filter-btn, .btn{ padding:10px 16px; min-height:44px; }
     .add-col-btn{ width:40px; height:40px; }
@@ -460,6 +519,7 @@
       <button class="tab-btn active" data-tab="log" role="tab" aria-selected="true">Log</button>
       <button class="tab-btn" data-tab="calendar" role="tab" aria-selected="false">Calendar</button>
       <button class="tab-btn" data-tab="autoplan" role="tab" aria-selected="false">Plan my week</button>
+      <button class="tab-btn" data-tab="block" role="tab" aria-selected="false" hidden>Block</button>
     </div>
   </header>
 
@@ -469,6 +529,7 @@
     <span id="storageNote">Saved in this browser.</span>
     <a id="splitLink">Training split</a> ·
     <a id="coachLink">Coaching preferences</a> ·
+    <a id="blockLink">Training block</a> ·
     <a id="gymsLink">Gyms</a> ·
     <a id="trashLink">Recently deleted</a> ·
     <a id="resetLink">Reset to sample data</a> ·
@@ -1962,10 +2023,13 @@ function render(){
   document.body.dataset.theme = DATA.theme || 'iron';
   renderThemeSwatches();
 
+  if(DATA.block) blockSync();
   const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   updateStatRow();
 
+  if(currentTab==='block' && !DATA.block) currentTab = 'log';
   document.querySelectorAll('.tab-btn').forEach(b=>{
+    if(b.dataset.tab==='block') b.hidden = !DATA.block;
     const isActive = b.dataset.tab===currentTab;
     b.classList.toggle('active', isActive);
     b.setAttribute('aria-selected', isActive ? 'true' : 'false');
@@ -1978,6 +2042,7 @@ function render(){
   const y = scrollLockY===null ? window.scrollY : null;
   if(currentTab==='log') renderLogTab(sortedSessions);
   else if(currentTab==='calendar') renderCalendarTab(sortedSessions);
+  else if(currentTab==='block') renderBlockTab();
   else renderAutoPlanTab(sortedSessions);
   if(y!==null && window.scrollY!==y) window.scrollTo(0, y);
 }
@@ -4724,6 +4789,499 @@ function openAddRunModal(defaultDate, onSaved){
   });
 }
 
+/* ============================= TRAINING BLOCK =============================
+   An imported multi-week programme (`DATA.block`), per account and absent unless
+   someone imports one — nothing here applies to anyone else. The programme itself
+   is data from the import; this code only knows the shape:
+     weeks  [{key, label, short, phase, start, guide:{aim, key[], drop, add}}]
+     items  [{key, week, kind:'gym'|'run'|'ride', type, title, date, note, userNote,
+              skip, mins, km, runType, rows:[{ex, label, sets, reps, each, lift, pct,
+              kg, rir, rest, note, ss, test, main}]}]
+     lifts  {squat:{ex, base, baseDate}, ...}  — the starting max for each lift
+     exMap  {block exercise name: exercise id}, chosen on import
+   Weights that come from a lift's max are worked out from the log, not typed in:
+   the max only ever rises, when a logged set proves more (`blockMaxes`). Each week
+   fixes its weights on the day it starts (`frozen`) and gets real planned sessions
+   then, so past weeks never change when the max moves on. Runs go into the run
+   schedule (tagged with the item's key) so the calendar and clash checks see them;
+   rides stay in the block view. */
+const BLOCK_FORMAT = 'utb-block';
+const BLOCK_SESSION_CAT = { legs:'legs', push:'push', pull:'pull', up:'upper' };
+let blockWeekShown = null;
+let blockOpen = new Set();
+
+function blockSessionId(item){ return 'blk-'+item.key; }
+function blockItemSession(item){ return DATA.sessions.find(s=>s.id===blockSessionId(item)) || null; }
+function blockRunEntry(item){ return (DATA.runSchedule||[]).find(r=>r.block===item.key) || null; }
+function blockWeek(key){ return (DATA.block.weeks||[]).find(w=>w.key===key) || null; }
+function blockWeekEnd(w){ return addDaysStr(w.start, 6); }
+function addDaysStr(iso, n){ const d = new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return fmtLocalDate(d); }
+/** Where an item actually is now: its session or run entry wins over the imported date. */
+function blockItemDate(item){
+  const s = item.kind==='gym' ? blockItemSession(item) : item.kind==='run' ? blockRunEntry(item) : null;
+  return s ? s.date : item.date;
+}
+function blockCurrentWeek(){
+  const t = todayLocal(), weeks = DATA.block.weeks;
+  return weeks.find(w=>t>=w.start && t<=blockWeekEnd(w)) || (t<weeks[0].start ? weeks[0] : weeks[weeks.length-1]);
+}
+const blockRound = (x)=>Math.round(x/2.5)*2.5;
+const firstNum = (v)=>{ const m = String(v==null?'':v).match(/\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+
+/**
+ * Each lift's working max as of today: the starting max, or the best estimate from
+ * any set logged since that's higher. Logged effort (@RIR) counts as typed; a set
+ * in a block session with no effort logged is taken at the RIR the plan asked for,
+ * as long as the planned reps were done — otherwise a set stopped two short reads
+ * as a max effort and the estimate would never catch up. The max never drops on its
+ * own: lighter days aren't evidence of getting weaker. Setting it by hand restarts
+ * the count from that day.
+ */
+function blockMaxes(){
+  const out = {};
+  Object.entries(DATA.block.lifts||{}).forEach(([lift, L])=>{
+    let best = { value:L.base, date:L.baseDate, text:'starting max' };
+    const exId = DATA.block.exMap[L.ex];
+    if(exId) DATA.sessions.forEach(s=>{
+      if(L.baseDate && s.date < L.baseDate) return;
+      const rx = (s.blockRx||{})[exId];
+      cellSets(exId+'|'+s.id).forEach(st=>{
+        if(!st.weight || st.weight.type!=='kg' || st.isSeconds || st.perSide || !isPlausibleSet(st) || st.reps<1 || st.reps>12) return;
+        const rir = st.rir!=null && !isNaN(st.rir) ? st.rir : (rx && st.reps>=rx.reps ? rx.rir : 0);
+        const est = Math.floor(estimate1RMWithRIR(st.weight.value, st.reps, rir)*2)/2;
+        if(est > best.value) best = { value:est, date:s.date, text:`${st.weight.value}kg × ${st.reps}${rir?` with ${rir} in reserve`:''}` };
+      });
+    });
+    out[lift] = best;
+  });
+  return out;
+}
+function blockMaxValues(maxes){ const v = {}; Object.keys(maxes).forEach(k=>{ v[k] = maxes[k].value; }); return v; }
+/** The maxes a week's weights come from: fixed once it has started, today's otherwise. */
+function blockWeekMaxes(weekKey){
+  return (DATA.block.frozen||{})[weekKey] || blockMaxValues(blockMaxes());
+}
+function blockRowKg(row, maxes){
+  if(row.lift && row.pct && maxes[row.lift]) return blockRound(maxes[row.lift]*row.pct);
+  return null;
+}
+function blockRowText(row, maxes){
+  if(row.test) return 'Work up to a max single';
+  const kg = blockRowKg(row, maxes);
+  return `${row.sets} × ${row.reps}${row.each?' each side':''}${kg!=null ? ' · '+kg+'kg' : row.kg ? ' · '+row.kg : ''}`;
+}
+function blockTestNote(max){
+  const r = (p)=>blockRound(max*p);
+  return `Warm-up: ${r(.5)}×5, ${r(.7)}×3, ${r(.8)}×1, ${r(.875)}×1, ${r(.93)}×1. Then attempts at ${r(1)}–${r(1.04)}kg, 4–5 min apart. Stop when the bar slows right down.`;
+}
+const blockRest = (m)=>m<1 ? Math.round(m*60)+' s' : (Math.round(m*4)/4)+' min';
+/** One line of the plan for an exercise, shown in the workout screen. */
+function blockRowNote(row, maxes){
+  const bits = [(row.ss?row.ss+' ':'')+(row.label||row.ex)+': '+blockRowText(row, maxes)];
+  if(row.rir) bits.push('RIR '+row.rir);
+  if(row.rest && !row.test) bits.push('rest '+blockRest(row.rest));
+  let s = bits.join(' · ');
+  if(row.test && row.lift && maxes[row.lift]) s += '. '+blockTestNote(maxes[row.lift]);
+  else if(row.note) s += '. '+row.note;
+  return s;
+}
+/** Planned sets for one row: the weight from the max where it has one, the weight
+ *  typed in the plan, or what the log says you used last time. Nothing guessed:
+ *  with none of those the exercise is still in the session, weight set on the day. */
+function blockRowSets(row, exId, maxes, sortedSessions){
+  if(row.test) return [];
+  const n = parseInt(row.sets,10) || 1, reps = firstNum(row.reps);
+  if(!reps || /s\b|sec/i.test(String(row.reps))) return [];
+  let weight = null;
+  const kg = blockRowKg(row, maxes);
+  if(kg!=null) weight = {type:'kg', value:kg};
+  else if(row.kg && /assist/i.test(row.kg) && firstNum(row.kg)) weight = {type:'assist', value:firstNum(row.kg)};
+  else if(row.kg && /kg/i.test(row.kg) && firstNum(row.kg)) weight = {type:'kg', value:firstNum(row.kg)};
+  else {
+    const sugg = parseSetsFromText(deterministicSuggestionFor(exId, sortedSessions).suggestion);
+    const kgs = sugg.filter(s=>s.weight && (s.weight.type==='kg' || s.weight.type==='assist'));
+    if(kgs.length) weight = Object.assign({}, kgs[kgs.length-1].weight);
+    else if(sugg.length && sugg[0].weight && sugg[0].weight.type==='bw') weight = {type:'bw'};
+  }
+  if(!weight) return [];
+  return Array.from({length:n}, ()=>({ weight:Object.assign({}, weight), reps, perSide:!!row.each, isSeconds:false, rir:null }));
+}
+function blockMakeSession(item, maxes){
+  const sortedSessions = [...DATA.sessions].sort((a,b)=>a.date.localeCompare(b.date));
+  const targets = {}, order = [], notes = {}, rx = {};
+  (item.rows||[]).forEach(row=>{
+    const exId = DATA.block.exMap[row.ex];
+    if(!exId || !DATA.exercises.some(e=>e.id===exId)) return;
+    targets[exId] = (targets[exId]||[]).concat(blockRowSets(row, exId, maxes, sortedSessions));
+    if(!order.includes(exId)) order.push(exId);
+    notes[exId] = (notes[exId] ? notes[exId]+' / ' : '') + blockRowNote(row, maxes);
+    const rir = firstNum(row.rir), reps = firstNum(row.reps);
+    if(row.main && rir!=null && reps && !row.test){
+      const prev = rx[exId];
+      rx[exId] = prev ? { rir:Math.min(prev.rir, rir), reps:Math.min(prev.reps, reps) } : { rir, reps };
+    }
+  });
+  const date = item.date;
+  DATA.sessions.push({
+    id:blockSessionId(item), date,
+    label:new Date(date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}),
+    cat:BLOCK_SESSION_CAT[item.type] || 'full', targets, order,
+    block:item.key, blockTitle:item.title, blockNotes:notes, blockRx:rx,
+  });
+}
+/** Starts every week that has begun: fixes its maxes and creates its gym sessions.
+ *  Runs on every render, so a week opens on its Monday whenever the app is next used. */
+function blockSync(){
+  const b = DATA.block;
+  if(!b || !Array.isArray(b.weeks) || !b.weeks.length) return;
+  b.frozen = b.frozen || {};
+  const today = todayLocal();
+  let changed = false;
+  b.weeks.forEach(w=>{
+    if(w.start <= today && !b.frozen[w.key]){ b.frozen[w.key] = blockMaxValues(blockMaxes()); changed = true; }
+  });
+  // a session moved into an earlier week opens when its new day comes round;
+  // `started` stops a session you deleted from coming back
+  b.items.filter(it=>it.kind==='gym' && !it.skip && !it.started && (b.frozen[it.week] || it.date<=today)).forEach(it=>{
+    if(!blockItemSession(it)) blockMakeSession(it, b.frozen[it.week] || blockMaxValues(blockMaxes()));
+    it.started = true; changed = true;
+  });
+  if(changed) scheduleSave();
+}
+function blockRunLabel(item){ return item.title + (item.km ? ' · '+item.km+' km' : ''); }
+/** Puts the block's runs into the run schedule. A day that already has a run of
+ *  yours keeps it unless `replace` says the block's should win. */
+function blockAddRuns(items, replace){
+  const byDate = {};
+  (DATA.runSchedule||[]).forEach(r=>{ byDate[r.date] = r; });
+  let kept = 0;
+  items.filter(it=>it.kind==='run' && !it.skip).forEach(it=>{
+    if(byDate[it.date] && !byDate[it.date].block && !replace){ kept++; return; }
+    byDate[it.date] = { date:it.date, type:it.runType || 'easy', label:blockRunLabel(it), block:it.key };
+  });
+  DATA.runSchedule = Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+  return kept;
+}
+/** Removes what the block put in the log that hasn't been used: planned sessions
+ *  with nothing logged, and runs from today on. Logged sessions stay — they're history. */
+function blockClearFuture(keepWeeks){
+  const today = todayLocal();
+  DATA.sessions = DATA.sessions.filter(s=>!s.block || sessionHasActual(s) || (keepWeeks && keepWeeks.has(s.block.split('-')[0])));
+  DATA.runSchedule = (DATA.runSchedule||[]).filter(r=>!r.block || r.date<today || (keepWeeks && keepWeeks.has(r.block.split('-')[0])));
+}
+
+/* ---------- import ---------- */
+function blockExerciseNames(block){
+  const names = [];
+  block.items.forEach(it=>(it.rows||[]).forEach(r=>{ if(r.ex && !names.includes(r.ex)) names.push(r.ex); }));
+  Object.values(block.lifts||{}).forEach(L=>{ if(L.ex && !names.includes(L.ex)) names.unshift(L.ex); });
+  return names;
+}
+function blockBestMatch(name){
+  const c = candidateExercisesFor(canonicalExerciseName(name));
+  return c.length ? c[0] : null;
+}
+function validBlock(b){
+  return b && b.format===BLOCK_FORMAT && Array.isArray(b.weeks) && b.weeks.length && Array.isArray(b.items) && b.lifts && typeof b.lifts==='object';
+}
+function openBlockModal(){
+  if(DATA.block) return openBlockManageModal();
+  openBlockImportModal();
+}
+function openBlockImportModal(){
+  const m = openModal(`
+    <div class="modal wide">
+      <button class="modal-close" id="mClose">&times;</button>
+      <h2>Import a training block</h2>
+      <p class="modal-sub">Paste a block exported from a training plan. It's saved to your account only.</p>
+      <textarea id="blkBox" placeholder='{"format":"${BLOCK_FORMAT}",...}' style="width:100%;height:160px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:2px;font-family:'IBM Plex Mono',monospace;font-size:11px;"></textarea>
+      <div id="blkErr"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="mCancel">Cancel</button>
+        <button class="btn primary" id="mGo">Check it</button>
+      </div>
+    </div>`);
+  m.querySelector('#mClose').addEventListener('click', closeModal);
+  m.querySelector('#mCancel').addEventListener('click', closeModal);
+  m.querySelector('#mGo').addEventListener('click', ()=>{
+    let parsed = null;
+    try{ parsed = JSON.parse(m.querySelector('#blkBox').value.trim()); }catch(e){}
+    if(!validBlock(parsed)){
+      m.querySelector('#blkErr').innerHTML = '<p class="plan-error">That isn\'t a training block. Copy it again from the plan, all of it.</p>';
+      return;
+    }
+    closeModal();
+    openBlockMatchModal(parsed);
+  });
+}
+/** One screen: which of your exercises each of the block's is, best guess picked. */
+function openBlockMatchModal(block){
+  const names = blockExerciseNames(block);
+  const lifts = new Set(Object.values(block.lifts).map(L=>L.ex));
+  const opts = (name)=>{
+    const best = blockBestMatch(name);
+    const list = candidateExercisesFor(canonicalExerciseName(name)).slice(0, 6);
+    const all = DATA.exercises.slice().sort((a,b)=>a.name.localeCompare(b.name)).filter(e=>!list.includes(e));
+    return `<option value="">Add “${escapeHtml(name)}” as a new exercise</option>`
+      + list.concat(all).map(e=>`<option value="${e.id}" ${best && best.id===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('');
+  };
+  const today = todayLocal();
+  const futureRuns = block.items.filter(it=>it.kind==='run' && !it.skip && it.date>=today);
+  const clashing = futureRuns.filter(it=>(DATA.runSchedule||[]).some(r=>r.date===it.date && !r.block)).length;
+  const m = openModal(`
+    <div class="modal wide">
+      <button class="modal-close" id="mClose">&times;</button>
+      <h2>${escapeHtml(block.name||'Training block')}</h2>
+      <p class="modal-sub">${block.weeks.length} weeks from ${fmtDay(block.weeks[0].start)}. Check each exercise is the right one from your log — that's where the history and the maxes come from.</p>
+      <div class="blk-match">${names.map((n,i)=>`<div class="field"><label for="blkEx${i}">${escapeHtml(n)}${lifts.has(n)?' · sets your max':''}</label><select id="blkEx${i}" data-blk-ex="${i}">${opts(n)}</select></div>`).join('')}</div>
+      ${clashing ? `<label class="blk-check"><input type="checkbox" id="blkReplace" checked> Replace ${clashing} run${clashing===1?'':'s'} already in your schedule on the block's run days</label>` : ''}
+      <div class="modal-actions">
+        <button class="btn ghost" id="mCancel">Cancel</button>
+        <button class="btn primary" id="mGo">Import block</button>
+      </div>
+    </div>`);
+  m.querySelector('#mClose').addEventListener('click', closeModal);
+  m.querySelector('#mCancel').addEventListener('click', closeModal);
+  m.querySelector('#mGo').addEventListener('click', ()=>{
+    const exMap = {};
+    m.querySelectorAll('[data-blk-ex]').forEach(sel=>{
+      const name = names[+sel.dataset.blkEx];
+      exMap[name] = sel.value || resolveNewExercise(name).id;
+    });
+    const rep = m.querySelector('#blkReplace');
+    closeModal();
+    importBlock(block, exMap, rep ? rep.checked : false);
+  });
+}
+/** A new exercise for a name the log hasn't seen — never a loose match, which is
+ *  what the matching screen was for. */
+function resolveNewExercise(name){
+  const clean = name.trim();
+  const existing = DATA.exercises.find(e=>e.name.toLowerCase()===clean.toLowerCase());
+  if(existing) return existing;
+  let id = clean.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || ('exercise-'+Date.now());
+  const base = id; let n = 1;
+  while(DATA.exercises.some(e=>e.id===id)){ n++; id = base+'-'+n; }
+  const ex = { id, name:clean, cat:guessCategory(clean) };
+  DATA.exercises.push(ex);
+  return ex;
+}
+/** A fresh import, or a newer copy of the same block: weeks that have already
+ *  started keep what they had (their sessions may be half logged); the rest is
+ *  replaced by the new copy. */
+function importBlock(block, exMap, replaceRuns){
+  const today = todayLocal();
+  const old = DATA.block;
+  const keepWeeks = new Set(old ? old.weeks.filter(w=>w.start<=today).map(w=>w.key) : []);
+  if(old) blockClearFuture(keepWeeks);
+  const items = block.items.filter(it=>!keepWeeks.has(it.week)).concat(old ? old.items.filter(it=>keepWeeks.has(it.week)) : []);
+  DATA.block = {
+    format:BLOCK_FORMAT, name:block.name, sub:block.sub||'', howTo:block.howTo||[], phases:block.phases||{},
+    weeks:block.weeks, items, lifts:old ? old.lifts : block.lifts,
+    exMap:Object.assign({}, old ? old.exMap : {}, exMap),
+    frozen:old ? old.frozen||{} : {}, done:old ? old.done||{} : {}, importedAt:today,
+  };
+  const kept = blockAddRuns(block.items.filter(it=>!keepWeeks.has(it.week) && it.date>=today), replaceRuns);
+  blockSync();
+  scheduleSave();
+  currentTab = 'block';
+  blockWeekShown = null;
+  render();
+  showToast(old ? 'Block updated.' : 'Block imported.'+(kept ? ` Kept ${kept} run${kept===1?'':'s'} you already had.` : ''));
+}
+function openBlockManageModal(){
+  const b = DATA.block, maxes = blockMaxes();
+  const m = openModal(`
+    <div class="modal">
+      <button class="modal-close" id="mClose">&times;</button>
+      <h2>${escapeHtml(b.name)}</h2>
+      <p class="modal-sub">Imported ${fmtDay(b.importedAt)}. Saved to your account only.</p>
+      <div class="field"><label>Maxes</label>
+        ${Object.entries(b.lifts).map(([k,L])=>`<div class="blk-max-row"><span>${escapeHtml(L.ex)}</span><b>${maxes[k].value}kg</b><button class="btn ghost" data-blk-setmax="${k}">Set</button></div>`).join('')}
+      </div>
+      <div class="modal-actions" style="flex-wrap:wrap;">
+        <button class="btn ghost" id="blkUpdate">Paste a newer copy</button>
+        <button class="btn ghost" id="blkRemove">Remove block</button>
+        <button class="btn primary" id="mDone">Done</button>
+      </div>
+    </div>`);
+  m.querySelector('#mClose').addEventListener('click', closeModal);
+  m.querySelector('#mDone').addEventListener('click', closeModal);
+  m.querySelectorAll('[data-blk-setmax]').forEach(btn=>btn.addEventListener('click', ()=>{ closeModal(); blockSetMax(btn.dataset.blkSetmax); }));
+  m.querySelector('#blkUpdate').addEventListener('click', ()=>{ closeModal(); openBlockImportModal(); });
+  m.querySelector('#blkRemove').addEventListener('click', async ()=>{
+    closeModal();
+    const ok = await confirmDialog('Remove '+b.name+'?\n\nIts planned sessions and runs from today on go; anything you\'ve logged stays in your history.', 'Remove');
+    if(!ok) return;
+    blockClearFuture(null);
+    delete DATA.block;
+    if(currentTab==='block') currentTab = 'log';
+    scheduleSave(); render();
+    showToast('Block removed.');
+  });
+}
+/** Sets a max by hand — for after a test, or to take it down. Logged sets count
+ *  from today on, so an old heavy day can't put it straight back up. */
+function blockSetMax(lift){
+  const L = DATA.block.lifts[lift];
+  const cur = blockMaxes()[lift].value;
+  const m = openModal(`
+    <div class="modal" style="max-width:400px;">
+      <h2>${escapeHtml(L.ex)} max</h2>
+      <p class="modal-sub">Now ${cur}kg. Weeks that have started keep their weights; later weeks use the new max.</p>
+      <div class="field"><input type="number" id="blkMax" inputmode="decimal" step="0.5" value="${cur}"></div>
+      <div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn primary" id="mGo">Save</button></div>
+    </div>`);
+  m.querySelector('#mCancel').addEventListener('click', closeModal);
+  m.querySelector('#mGo').addEventListener('click', ()=>{
+    const v = parseFloat(m.querySelector('#blkMax').value);
+    if(!(v>0 && v<500)){ showToast('Enter a weight in kg.'); return; }
+    L.base = v; L.baseDate = todayLocal();
+    closeModal(); scheduleSave(); render();
+  });
+}
+
+/* ---------- moving block items ---------- */
+function blockMoveItem(item){
+  const cur = blockItemDate(item);
+  const b = DATA.block;
+  const m = openModal(`
+    <div class="modal" style="max-width:400px;">
+      <h2>Move ${escapeHtml(item.title)}</h2>
+      <div class="field"><input type="date" id="blkDate" value="${cur}" min="${b.weeks[0].start}" max="${blockWeekEnd(b.weeks[b.weeks.length-1])}"></div>
+      <div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn primary" id="mGo">Move</button></div>
+    </div>`);
+  m.querySelector('#mCancel').addEventListener('click', closeModal);
+  m.querySelector('#mGo').addEventListener('click', ()=>{
+    const d = m.querySelector('#blkDate').value;
+    if(!d || d===cur){ closeModal(); return; }
+    if(item.kind==='run'){
+      const clash = (DATA.runSchedule||[]).find(r=>r.date===d);
+      if(clash){ showToast('There\'s already a run on that day. Move that one first.'); return; }
+      const r = blockRunEntry(item);
+      if(r) r.date = d;
+      DATA.runSchedule.sort((a,b2)=>a.date.localeCompare(b2.date));
+    } else if(item.kind==='gym' && blockItemSession(item)) moveSessionDate(blockSessionId(item), d);
+    item.date = d;
+    closeModal(); scheduleSave(); render();
+  });
+}
+
+/* ---------- the Block tab ---------- */
+function blockItemStatus(item){
+  if(item.skip) return 'skipped';
+  if(item.kind==='gym'){
+    const s = blockItemSession(item);
+    if(!s) return 'planned';
+    const st = sessionStatus(s);
+    return st==='completed' || s.finished ? 'done' : st;
+  }
+  if(item.kind==='run' && !blockRunEntry(item) && blockItemDate(item)>=todayLocal()) return 'removed';
+  return (DATA.block.done||{})[item.key] ? 'done' : 'planned';
+}
+function renderBlockTab(){
+  const app = document.getElementById('app');
+  const b = DATA.block;
+  if(!b){ currentTab = 'log'; render(); return; }
+  const today = todayLocal();
+  const wk = blockWeek(blockWeekShown) || blockCurrentWeek();
+  blockWeekShown = wk.key;
+  const wi = b.weeks.indexOf(wk), end = blockWeekEnd(wk);
+  const started = !!(b.frozen||{})[wk.key];
+  const maxes = blockWeekMaxes(wk.key);
+  const items = b.items.filter(it=>{ const d = blockItemDate(it); return d>=wk.start && d<=end; });
+  const live = items.filter(it=>!it.skip && blockItemStatus(it)!=='removed');
+  const km = live.filter(it=>it.kind==='run').reduce((a,it)=>a+(Number(it.km)||0),0);
+  const rideMins = live.filter(it=>it.kind==='ride').reduce((a,it)=>a+(Number(it.mins)||0),0);
+  const gyms = live.filter(it=>it.kind==='gym');
+  const fmtMinsShort = (m)=>m>=60 ? Math.floor(m/60)+'h'+(m%60?String(m%60).padStart(2,'0'):'') : m+'m';
+  const phase = (b.phases||{})[wk.phase] || {};
+  const g = wk.guide || {};
+
+  const strip = `<div class="blk-strip">${b.weeks.map(w=>{
+    const cur = today>=w.start && today<=blockWeekEnd(w);
+    return `<button class="blk-wk ${w.key===wk.key?'sel':''} ${cur?'cur':''}" data-blk-week="${w.key}" style="--pc:${(b.phases[w.phase]||{}).color||'var(--accent)'}" aria-label="${escapeHtml(w.label)}">${escapeHtml(w.short)}</button>`;
+  }).join('')}</div>`;
+
+  const itemHTML = (it)=>{
+    const st = blockItemStatus(it), open = blockOpen.has(it.key);
+    const s = it.kind==='gym' ? blockItemSession(it) : null;
+    const meta = it.kind==='gym' ? (it.mins ? '~'+fmtMinsShort(it.mins) : '') : it.kind==='run' ? (it.km||'')+' km' : fmtMinsShort(it.mins||0);
+    const dot = it.kind==='gym' ? (phase.color||'var(--accent)') : it.kind==='run' ? 'var(--leg)' : 'var(--pull)';
+    let body = '';
+    if(open){
+      if(it.kind==='gym'){
+        body += `<ol class="blk-rows">${(it.rows||[]).map(r=>`<li><div class="blk-row-top"><span>${r.ss?`<b class="blk-ss">${escapeHtml(r.ss)}</b>`:''}${escapeHtml(r.label||r.ex)}</span><span class="blk-rx">${escapeHtml(blockRowText(r, maxes))}</span></div>
+          <div class="blk-row-note">${r.rir?`<span class="blk-tag">RIR ${escapeHtml(r.rir)}</span>`:''}${r.rest&&!r.test?`<span class="blk-tag">Rest ${blockRest(r.rest)}</span>`:''}${escapeHtml(r.test && r.lift && maxes[r.lift] ? blockTestNote(maxes[r.lift]) : (r.note||''))}</div></li>`).join('')}</ol>`;
+        if(gyms.some(x=>(x.rows||[]).some(r=>r.lift && !r.test))) body += `<p class="blk-hint"><b>Too easy?</b> If the first work set leaves 2 or more reps more in hand than its RIR, add 2.5kg (5kg on squats and deadlifts) for the rest and log what you did. The app raises your max from it for the weeks that follow.</p>`;
+      } else if(it.note && !(it.userNote && it.titled)) body += `<p class="blk-note">${escapeHtml(it.note)}</p>`;
+      if(it.userNote) body += `<p class="blk-unote">${escapeHtml(it.userNote)}</p>`;
+      const acts = [];
+      if(s) acts.push(`<button class="btn primary" data-blk-open="${it.key}">${st==='done'?'View':'Open workout'}</button>`);
+      if(st!=='done' && st!=='skipped') acts.push(`<button class="btn ghost" data-blk-move="${it.key}">Move</button>`);
+      if(it.kind!=='gym' && st!=='removed') acts.push(`<button class="btn ghost" data-blk-done="${it.key}">${st==='done'?'Not done':'Done'}</button>`);
+      if(acts.length) body += `<div class="blk-acts">${acts.join('')}</div>`;
+      body = `<div class="blk-body">${body}</div>`;
+    }
+    const line = it.kind==='gym' ? (it.rows||[]).slice(0,3).map(r=>r.ex).join(' · ') : '';
+    return `<article class="blk-item ${st}">
+      <button class="blk-head" data-blk-toggle="${it.key}" aria-expanded="${open}">
+        <span class="blk-title"><i class="dot" style="background:${dot}"></i>${escapeHtml(it.title)}${st==='done'?' <span class="blk-done">✓</span>':''}</span>
+        <span class="blk-meta">${escapeHtml(String(meta))}</span>
+        ${line?`<span class="blk-line">${escapeHtml(line)}</span>`:''}
+        ${st==='skipped'||st==='removed'||st==='in-progress'?`<span class="blk-line">${st==='skipped'?'Skipped':st==='removed'?'Taken out of your run schedule':'In progress'}</span>`:''}
+      </button>${body}</article>`;
+  };
+
+  let days = '';
+  for(let d=0; d<7; d++){
+    const date = addDaysStr(wk.start, d);
+    const list = items.filter(it=>blockItemDate(it)===date);
+    const dl = new Date(date+'T00:00:00');
+    days += `<li class="blk-day ${date===today?'today':''}"><div class="blk-dlabel"><b>${dl.toLocaleDateString('en-GB',{weekday:'short'})}</b><span>${dl.getDate()} ${dl.toLocaleDateString('en-GB',{month:'short'})}</span></div>
+      <div class="blk-dsess">${list.length ? list.map(itemHTML).join('') : '<p class="blk-rest">Rest day</p>'}</div></li>`;
+  }
+
+  const allMaxes = blockMaxes();
+  const maxesHTML = Object.entries(b.lifts).map(([k,L])=>{
+    const M = allMaxes[k];
+    return `<div class="blk-max-row"><span>${escapeHtml(L.ex)}</span><b>${M.value}kg</b><small>${M.text==='starting max' ? 'starting max' : 'from '+escapeHtml(M.text)+' on '+new Date(M.date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</small></div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="blk">
+      <div class="blk-top"><h2>${escapeHtml(b.name)}</h2>${b.sub?`<p class="sub">${escapeHtml(b.sub)}</p>`:''}</div>
+      ${strip}
+      <div class="blk-nav">
+        <button class="btn ghost" data-blk-step="-1" ${wi===0?'disabled':''} aria-label="Previous week">‹</button>
+        <div class="blk-wtitle"><span class="blk-phase" style="color:${phase.color||'var(--accent)'}">${escapeHtml(phase.name||'')}</span><h3>${escapeHtml(wk.label)}</h3><span>${fmtDay(wk.start)} – ${fmtDay(end)}</span></div>
+        <button class="btn ghost" data-blk-step="1" ${wi===b.weeks.length-1?'disabled':''} aria-label="Next week">›</button>
+      </div>
+      <div class="blk-totals"><span><b>${km}</b> km running</span><span><b>${fmtMinsShort(rideMins)}</b> riding</span><span><b>${gyms.length}</b> gym</span>${today>=wk.start&&today<=end?'':`<a class="inline-link" data-blk-today>This week</a>`}</div>
+      ${started ? '' : `<p class="blk-hint">Weights are worked out from your maxes today and fix when the week starts on ${fmtDay(wk.start)}.</p>`}
+      ${g.aim ? `<div class="blk-guide"><p><b>${escapeHtml(g.aim)}</b></p>${(g.key||[]).length?`<ul>${g.key.map(k=>`<li>${escapeHtml(k)}</li>`).join('')}</ul>`:''}
+        <div class="blk-guide-dl"><div><span>Short on time</span>${escapeHtml(g.drop||'')}</div><div><span>Time to spare</span>${escapeHtml(g.add||'')}</div></div></div>` : ''}
+      <ol class="blk-days">${days}</ol>
+      <div class="blk-guide"><p><b>Maxes</b></p>${maxesHTML}<p class="blk-hint" style="margin-top:8px;">They go up on their own when a logged set shows more. <a class="inline-link" data-blk-manage>Set one by hand</a></p></div>
+      ${(b.howTo||[]).length ? `<details class="blk-guide"><summary><b>How the block works</b></summary><ul>${b.howTo.map(h=>`<li>${escapeHtml(h)}</li>`).join('')}</ul></details>` : ''}
+    </div>`;
+
+  app.querySelectorAll('[data-blk-week]').forEach(el=>el.addEventListener('click', ()=>{ blockWeekShown = el.dataset.blkWeek; render(); }));
+  app.querySelectorAll('[data-blk-step]').forEach(el=>el.addEventListener('click', ()=>{ const w = b.weeks[wi + (+el.dataset.blkStep)]; if(w){ blockWeekShown = w.key; render(); } }));
+  const t = app.querySelector('[data-blk-today]'); if(t) t.addEventListener('click', ()=>{ blockWeekShown = null; render(); });
+  const mg = app.querySelector('[data-blk-manage]'); if(mg) mg.addEventListener('click', openBlockManageModal);
+  const itemByKey = (k)=>b.items.find(it=>it.key===k);
+  app.querySelectorAll('[data-blk-toggle]').forEach(el=>el.addEventListener('click', ()=>{ const k = el.dataset.blkToggle; blockOpen.has(k) ? blockOpen.delete(k) : blockOpen.add(k); render(); }));
+  app.querySelectorAll('[data-blk-open]').forEach(el=>el.addEventListener('click', ()=>openWorkoutMode(blockSessionId(itemByKey(el.dataset.blkOpen)))));
+  app.querySelectorAll('[data-blk-move]').forEach(el=>el.addEventListener('click', ()=>blockMoveItem(itemByKey(el.dataset.blkMove))));
+  app.querySelectorAll('[data-blk-done]').forEach(el=>el.addEventListener('click', ()=>{
+    b.done = b.done || {};
+    const k = el.dataset.blkDone;
+    if(b.done[k]) delete b.done[k]; else b.done[k] = true;
+    scheduleSave(); render();
+  }));
+}
+
 /* ============================= DETERMINISTIC SUGGESTIONS (no AI needed) ============================= */
 function incrementFor(w, exName){
   const n = (exName||'').toLowerCase();
@@ -6037,8 +6595,9 @@ function openWorkoutMode(sessionId){
           <button class="btn ghost" data-ex-remove="${e.id}" title="Not doing this one — remove from session">×</button>
         </div>
       </div>
+      ${(session.blockNotes||{})[e.id] ? `<div class="workout-ex-plan">Plan: ${escapeHtml(session.blockNotes[e.id])}</div>` : ''}
       ${h.recentSets.map((s,idx)=>`<div class="workout-ex-target">${idx===0?'Last time':'Before that'}: ${escapeHtml(s.text)} <span style="color:var(--text-faint);">(${escapeHtml(s.dateLabel)})</span></div>`).join('')}
-      ${h.hint ? `<div class="workout-ex-hint">${escapeHtml(h.hint)}</div>` : ''}
+      ${h.hint && !(session.blockNotes||{})[e.id] ? `<div class="workout-ex-hint">${escapeHtml(h.hint)}</div>` : ''}
       ${h.warning ? `<div class="workout-ex-warn">${escapeHtml(h.warning)}</div>` : ''}
       ${body}
     </div>`;
@@ -6071,7 +6630,7 @@ function openWorkoutMode(sessionId){
     const top = overlay.scrollTop;
     overlay.innerHTML = `
       <div class="workout-head">
-        <div class="workout-title">${CATS[session.cat].label} · ${session.label}${session.equipMode ? `<span class="equip-day">${EQUIP_MODE_LABEL[session.equipMode]}</span>` : ''}</div>
+        <div class="workout-title">${session.blockTitle ? escapeHtml(session.blockTitle) : CATS[session.cat].label} · ${session.label}${session.equipMode ? `<span class="equip-day">${EQUIP_MODE_LABEL[session.equipMode]}</span>` : ''}</div>
         <button class="btn" data-finish>Finish</button>
       </div>
       ${gymBarHTML()}
@@ -7597,6 +8156,7 @@ document.getElementById('volBtn').addEventListener('click', openSetVolumeModal);
 document.getElementById('prsBtn').addEventListener('click', openPRsModal);
 document.getElementById('trashLink').addEventListener('click', openTrashModal);
 document.getElementById('coachLink').addEventListener('click', openCoachPrefsModal);
+document.getElementById('blockLink').addEventListener('click', openBlockModal);
 document.getElementById('gymsLink').addEventListener('click', ()=>openManageGymsModal());
 document.getElementById('splitLink').addEventListener('click', async ()=>{
   const pick = await chooseDialog('Training split', 'How do you split your sessions? Changing this only affects new sessions — your history stays as it is.',
