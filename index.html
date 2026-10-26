@@ -5236,6 +5236,50 @@ function blockText(weeks){
     + 'Runs in km (easy under 160 bpm), rides in minutes (under 150).\n\n'
     + weeks.map(blockWeekText).join('\n\n');
 }
+/** Everything, for a file: no length limit, so the week guides, cues, rests and
+ *  whole notes go in, and the full names. */
+function blockFullText(){
+  const b = DATA.block, maxes = blockMaxes();
+  const day = (d)=>new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'short', year:'numeric'});
+  const out = [b.name.toUpperCase(), b.sub||'', '',
+    'Maxes now: '+Object.entries(b.lifts).map(([k,L])=>`${L.ex} ${maxes[k].value} kg`).join(', ')+'. Lift weights are percentages of these, rounded to 2.5 kg; weeks that have started have their weights fixed.', ''];
+  if((b.howTo||[]).length) out.push('HOW THE BLOCK WORKS', ...b.howTo.map(h=>'- '+h), '');
+  b.weeks.forEach(w=>{
+    const maxesW = blockWeekMaxes(w.key), g = w.guide || {};
+    const phase = ((b.phases||{})[w.phase]||{}).name;
+    out.push('='.repeat(8), `${w.label.toUpperCase()}: ${day(w.start)} to ${day(blockWeekEnd(w))}${phase?' · '+phase:''}${(b.frozen||{})[w.key]?'':' (weights projected from current maxes)'}`);
+    if(g.aim) out.push('Aim: '+g.aim);
+    (g.key||[]).forEach(k=>out.push('- '+k));
+    if(g.drop) out.push('Short on time: '+g.drop);
+    if(g.add) out.push('Time to spare: '+g.add);
+    for(let i=0; i<7; i++){
+      const date = addDaysStr(w.start, i);
+      const items = b.items.filter(it=>blockItemDate(it)===date && blockItemStatus(it)!=='removed');
+      out.push('', day(date)+(items.length?'':': rest'));
+      items.forEach(it=>{
+        const amount = it.kind==='gym' ? (it.mins?` (about ${it.mins} min)`:'') : it.kind==='run' ? ` ${it.km} km` : ` ${it.mins} min`;
+        out.push(`* ${it.title}${amount}${it.skip?' [skipped]':''}`);
+        if(it.kind==='gym') (it.rows||[]).forEach(r=>out.push('  '+blockRowNote(r, maxesW)));
+        else if(it.note && !(it.userNote && it.titled)) out.push('  '+it.note);
+        if(it.userNote) out.push('  Note: '+it.userNote);
+      });
+    }
+    out.push('');
+  });
+  return out.join('\n');
+}
+async function shareBlockFile(){
+  const name = DATA.block.name.replace(/[^A-Za-z0-9]+/g,'-').replace(/(^-|-$)/g,'').toLowerCase()+'.txt';
+  const file = new File([blockFullText()], name, { type:'text/plain' });
+  // phones: the share sheet, so it can go straight to another app; elsewhere a download
+  try{
+    if(navigator.canShare && navigator.canShare({ files:[file] })){ await navigator.share({ files:[file], title:DATA.block.name }); return; }
+  }catch(e){ if(e && e.name==='AbortError') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+}
 /** The block in phase-sized pieces, the recovery week going with the first. */
 function blockChunks(){
   const groups = [];
@@ -5366,7 +5410,7 @@ function renderBlockTab(){
       ${g.aim ? `<div class="blk-guide"><p><b>${escapeHtml(g.aim)}</b></p>${(g.key||[]).length?`<ul>${g.key.map(k=>`<li>${escapeHtml(k)}</li>`).join('')}</ul>`:''}
         <div class="blk-guide-dl"><div><span>Short on time</span>${escapeHtml(g.drop||'')}</div><div><span>Time to spare</span>${escapeHtml(g.add||'')}</div></div></div>` : ''}
       <ol class="blk-days">${days}</ol>
-      <p class="blk-copy">Copy as text: <a class="inline-link" data-blk-copy="week">this week</a> · weeks ${blockChunks().map((c,i)=>`<a class="inline-link" data-blk-copy="${i}">${c.label}</a>`).join(' · ')} · <a class="inline-link" data-blk-copy="all">whole block</a></p>
+      <p class="blk-copy">Copy as text: <a class="inline-link" data-blk-copy="week">this week</a> · weeks ${blockChunks().map((c,i)=>`<a class="inline-link" data-blk-copy="${i}">${c.label}</a>`).join(' · ')} · <a class="inline-link" data-blk-copy="all">whole block</a><br>Or the full detail as a file: <a class="inline-link" data-blk-file>share or download</a></p>
       <div class="blk-guide"><p><b>Maxes</b></p>${maxesHTML}<p class="blk-hint" style="margin-top:8px;">They go up on their own when a logged set shows more. <a class="inline-link" data-blk-manage>Set one by hand</a></p></div>
       ${(b.howTo||[]).length ? `<details class="blk-guide"><summary><b>How the block works</b></summary><ul>${b.howTo.map(h=>`<li>${escapeHtml(h)}</li>`).join('')}</ul></details>` : ''}
     </div>`;
@@ -5375,6 +5419,7 @@ function renderBlockTab(){
   app.querySelectorAll('[data-blk-step]').forEach(el=>el.addEventListener('click', ()=>{ const w = b.weeks[wi + (+el.dataset.blkStep)]; if(w){ blockWeekShown = w.key; render(); } }));
   const t = app.querySelector('[data-blk-today]'); if(t) t.addEventListener('click', ()=>{ blockWeekShown = null; render(); });
   const mg = app.querySelector('[data-blk-manage]'); if(mg) mg.addEventListener('click', openBlockManageModal);
+  const fl = app.querySelector('[data-blk-file]'); if(fl) fl.addEventListener('click', shareBlockFile);
   app.querySelectorAll('[data-blk-copy]').forEach(el=>el.addEventListener('click', ()=>{
     const c = el.dataset.blkCopy, chunk = blockChunks()[+c];
     if(c==='all') copyBlockText(b.weeks, 'Whole block');
