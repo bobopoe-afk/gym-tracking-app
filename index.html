@@ -3290,7 +3290,7 @@ function renderLogTab(sortedSessions, half){
   if(editTodayLogBtn) editTodayLogBtn.addEventListener('click', ()=>{
     const todayStr = todayLocal();
     const session = DATA.sessions.find(s=>s.date===todayStr);
-    currentTab='log'; activeCat = session ? session.cat : 'all'; render();
+    currentTab='log'; activeCat = 'all'; render();
   });
   document.querySelectorAll('[data-change-split]').forEach(b=>b.addEventListener('click', ()=>{
     openChangeSplitModal(b.dataset.changeSplit);
@@ -3742,7 +3742,7 @@ function openChangeSplitModal(sessionId){
   m.querySelector('#mSave').addEventListener('click', ()=>{
     session.cat = m.querySelector('#fSplit').value;
     scheduleSave(); closeModal();
-    activeCat = session.cat; render();
+    activeCat = 'all'; render();
   });
 }
 
@@ -3990,7 +3990,7 @@ function openDayModal(dateStr){
     openAddRunModal(dateStr, ()=>openDayModal(dateStr));
   });
   if(sessions.length){
-    m.querySelector('#goLog').addEventListener('click', ()=>{ closeModal(); currentTab='log'; activeCat=sessions[0].cat; render(); });
+    m.querySelector('#goLog').addEventListener('click', ()=>{ closeModal(); currentTab='log'; activeCat='all'; render(); });
       m.querySelectorAll('[data-edit-entry]').forEach(btn=>btn.addEventListener('click', ()=>{
       const [sessId, exId] = btn.dataset.editEntry.split('::');
       closeModal();
@@ -7660,7 +7660,7 @@ function openPlanSessionModal(defaultCat, defaultDate){
       wrap.remove();
       document.removeEventListener('keydown', escCloseOnce);
       if(isDup) showToast('Added as a second session on that date.');
-      currentTab = 'log'; activeCat = cat; render();
+      currentTab = 'log'; activeCat = 'all'; render();
     });
 
     // only on first open: re-focusing on every redraw reopened the date picker on phones
@@ -7999,7 +7999,7 @@ Chest supported row:
       scheduleSave();
       close();
       if(isDup) showToast('Added as a second session on that date.');
-      currentTab = 'log'; activeCat = cat; render();
+      currentTab = 'log'; activeCat = 'all'; render();
     });
   }
 
